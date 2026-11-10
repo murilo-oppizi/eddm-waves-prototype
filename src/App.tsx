@@ -1740,7 +1740,8 @@ function WaveRow({
   const hasIssues = view.issues.length > 0
   // Only a wrong date is an error. Too few residences and a missing date are things still to do.
   const hasErrors = view.issues.some((i) => i.kind === "duplicate" || i.kind === "early")
-  const below = view.issues.some((i) => i.kind === "minimum")
+  // Shown from 0, also for a new, empty wave.
+  const below = view.residences < WAVE_MINIMUM
   const title = `Wave ${view.index + 1}`
   // The table names each route's place when the campaign has routes in more than one.
   const multiPlace = new Set(views.flatMap((v) => v.routes.map((r) => r.location))).size > 1
