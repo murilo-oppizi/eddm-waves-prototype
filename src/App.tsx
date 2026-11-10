@@ -1778,14 +1778,14 @@ function WaveRow({
           </CollapsibleTrigger>
 
           {/* Progress to the minimum: a small bar with no error colour. It stays, full, once the minimum is reached. */}
-          <div className="flex w-44 shrink-0 flex-col gap-1.5">
+          <div className="flex w-52 shrink-0 flex-col gap-1.5">
             {/* "Min." names the target as a minimum. "823 / 1,000" reads like a limit. */}
-            <span className="flex items-baseline justify-between gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+            <span className="flex items-center justify-between gap-3 text-xs leading-4 whitespace-nowrap text-muted-foreground tabular-nums">
               <span>
                 <span className="font-medium text-foreground">{fmtNum(view.residences)}</span>{" "}
                 residences
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex shrink-0 items-center gap-1">
                 {!below && <Check className="size-3 text-emerald-600" aria-label="Minimum reached" />}
                 Min. {fmtNum(WAVE_MINIMUM)}
               </span>
@@ -1798,7 +1798,7 @@ function WaveRow({
             onChange={(d) => actions.setDate(view.wave.id, d)}
             taken={taken}
             invalid={hasErrors}
-            className="w-48"
+            className="w-40 gap-1.5 px-2.5"
           />
 
           <div className="w-28 shrink-0 tabular-nums">
