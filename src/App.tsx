@@ -1777,20 +1777,21 @@ function WaveRow({
             </span>
           </CollapsibleTrigger>
 
-          {/* A wave below the minimum is unfinished, not wrong: a small progress bar, with no error colour. */}
-          {below && (
-            <div className="flex w-44 shrink-0 flex-col gap-1.5">
-              {/* "Min." names the target as a minimum. "823 / 1,000" reads like a limit. */}
-              <span className="flex items-baseline justify-between gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                <span>
-                  <span className="font-medium text-foreground">{fmtNum(view.residences)}</span>{" "}
-                  residences
-                </span>
-                <span>Min. {fmtNum(WAVE_MINIMUM)}</span>
+          {/* Progress to the minimum: a small bar with no error colour. It stays, full, once the minimum is reached. */}
+          <div className="flex w-44 shrink-0 flex-col gap-1.5">
+            {/* "Min." names the target as a minimum. "823 / 1,000" reads like a limit. */}
+            <span className="flex items-baseline justify-between gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+              <span>
+                <span className="font-medium text-foreground">{fmtNum(view.residences)}</span>{" "}
+                residences
               </span>
-              <MinimumBar view={view} className="h-1" />
-            </div>
-          )}
+              <span className="flex items-center gap-1">
+                {!below && <Check className="size-3 text-emerald-600" aria-label="Minimum reached" />}
+                Min. {fmtNum(WAVE_MINIMUM)}
+              </span>
+            </span>
+            <MinimumBar view={view} className="h-1" />
+          </div>
 
           <DatePicker
             value={view.wave.date}
