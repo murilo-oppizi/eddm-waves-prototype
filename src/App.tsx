@@ -1818,32 +1818,24 @@ function WaveRow({
               </span>
               <span className="block truncate text-xs text-muted-foreground">
                 {view.routes.length} {view.routes.length === 1 ? "route" : "routes"}
+                {/* While the wave is below the minimum, this line says how far it is. No bar here: the bar is in the map dialog. */}
+                {below && (
+                  <>
+                    {" · "}
+                    <span className="tabular-nums">{fmtNum(WAVE_MINIMUM - view.residences)}</span> more
+                    to reach the {fmtNum(WAVE_MINIMUM)} minimum
+                  </>
+                )}
               </span>
             </span>
           </CollapsibleTrigger>
-
-          {/* Progress to the minimum: a small bar with no error colour. It stays, full, once the minimum is reached. */}
-          <div className="flex w-52 shrink-0 flex-col gap-1.5">
-            {/* "Min." names the target as a minimum. "823 / 1,000" reads like a limit. */}
-            <span className="flex items-center justify-between gap-3 text-xs leading-4 whitespace-nowrap text-muted-foreground tabular-nums">
-              <span>
-                <span className="font-medium text-foreground">{fmtNum(view.residences)}</span>{" "}
-                residences
-              </span>
-              <span className="flex shrink-0 items-center gap-1">
-                {!below && <Check className="size-3 text-emerald-600" aria-label="Minimum reached" />}
-                Min. {fmtNum(WAVE_MINIMUM)}
-              </span>
-            </span>
-            <MinimumBar view={view} className="h-1" />
-          </div>
 
           <DatePicker
             value={view.wave.date}
             onChange={(d) => actions.setDate(view.wave.id, d)}
             taken={taken}
             invalid={dateError}
-            className="w-40 gap-1.5 px-2.5"
+            className="w-48"
           />
 
           <div className="w-28 shrink-0 tabular-nums">
