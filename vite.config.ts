@@ -5,6 +5,8 @@ import { defineConfig } from "vite"
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Relative paths, so the build also works under a sub-path such as GitHub Pages.
+  base: "./",
   plugins: [react(), tailwindcss()],
   // The map library finds its worker file next to itself, so it must not be pre-bundled.
   optimizeDeps: { exclude: ["maplibre-gl"] },
