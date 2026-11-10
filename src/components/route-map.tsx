@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Map as MapLibre, type GeoJSONSource, type MapMouseEvent } from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { Lasso, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react"
+import { CircleDashed, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react"
 import { cn } from "cn"
 
 import { IconButton } from "@/components/icon-button"
@@ -481,7 +481,7 @@ export function RouteMap({
           {(
             [
               ["route", "Route", MousePointer2],
-              ["area", "Area", Lasso],
+              ["area", "Area", CircleDashed],
             ] as const
           ).map(([value, label, Icon]) => (
             <Button
