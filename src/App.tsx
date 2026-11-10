@@ -12,7 +12,6 @@ import {
   CircleDot,
   Circle,
   Home,
-  Info,
   LayoutGrid,
   Mail,
   Expand,
@@ -110,7 +109,6 @@ import {
   LOCATION_BY_ID,
   MAX_WAVES,
   MIN_DATE,
-  PRICE_TIERS,
   RADIUS,
   ROUTES,
   WAVE_MINIMUM,
@@ -528,7 +526,6 @@ export function App() {
                 <ScheduleCard
                   views={views}
                   residences={residences}
-                  extraCost={pieces === residences ? total - singleTotal : 0}
                   actions={actions}
                   onSplit={() => setSplitOpen(true)}
                   onOpenMap={(waveId) => {
@@ -811,8 +808,9 @@ function WaveSelect({
                 >
                   <WaveDots views={views} />
                   <span className="whitespace-nowrap">All waves</span>
-                  <span className="flex-1 truncate pl-1 text-xs font-normal text-muted-foreground">
-                    Add to each wave
+                  {/* The sum of the waves below: a route in two waves counts twice, as it is mailed twice. */}
+                  <span className="flex-1 truncate pl-1 text-xs font-normal text-muted-foreground tabular-nums">
+                    {fmtNum(views.reduce((sum, v) => sum + v.residences, 0))} residences
                   </span>
                   {all && <Check className="size-3.5 shrink-0" />}
                 </button>
@@ -838,7 +836,7 @@ function WaveSelect({
                     <WaveDot color={v.color} />
                     <span className="whitespace-nowrap">Wave {v.index + 1}</span>
                     <span className="flex-1 truncate pl-1 text-xs font-normal text-muted-foreground tabular-nums">
-                      {fmtDate(v.wave.date, "MMM d")} · {fmtNum(v.residences)} residences
+                      {fmtNum(v.residences)} residences
                     </span>
                     {current && <Check className="size-3.5 shrink-0" />}
                   </button>
@@ -1521,13 +1519,7 @@ function MapDialog({
               <ul className="flex flex-col">
                 {listed.map((r) => (
                   <li key={r.id} className="flex items-center gap-2 border-b py-1.5 last:border-0">
-                    <button
-                      className="rounded-sm font-medium tabular-nums underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-                      title="Show on map"
-                      onClick={() => onShow(r.id)}
-                    >
-                      {r.id}
-                    </button>
+                    <RouteLink id={r.id} onShow={onShow} />
                     <OtherWaves route={r} view={all ? undefined : active} views={views} />
                     <span className="text-muted-foreground tabular-nums">
                       {fmtNum(r.residences)}
@@ -1591,6 +1583,28 @@ function WaveDot({ color }: { color: string }) {
   )
 }
 
+/**
+ * A route number that shows the route on the map. It is underlined on hover, like a link, and our
+ * own tooltip says where it goes.
+ */
+function RouteLink({ id, onShow }: { id: string; onShow: (routeId: string) => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            className="rounded-sm font-medium tabular-nums underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+            onClick={() => onShow(id)}
+          />
+        }
+      >
+        {id}
+      </TooltipTrigger>
+      <TooltipContent side="right">Show on map</TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** Dots for the other waves that also mail this route. Without `view`, dots for every wave that mails it. */
 function OtherWaves({ route, view, views }: { route: Route; view?: WaveView; views: WaveView[] }) {
   const also = views.filter((v) => v !== view && v.routes.includes(route))
@@ -1620,43 +1634,15 @@ function WaveDots({ views }: { views: WaveView[] }) {
   )
 }
 
-function PriceTable() {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            className="inline-flex rounded-sm align-middle text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-            aria-label="Price per piece by quantity"
-          />
-        }
-      >
-        <Info className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipContent className="block w-52 p-3">
-        <div className="mb-1.5 font-medium">Price per piece, by mailing size</div>
-        {[...PRICE_TIERS].reverse().map((t) => (
-          <div key={t.min} className="flex justify-between tabular-nums">
-            <span>{fmtNum(t.min)}+ residences</span>
-            <span>{fmtMoney(t.price)}</span>
-          </div>
-        ))}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
 function ScheduleCard({
   views,
   residences,
-  extraCost,
   actions,
   onSplit,
   onOpenMap,
 }: {
   views: WaveView[]
   residences: number
-  extraCost: number
   actions: Actions
   onSplit: () => void
   onOpenMap: (waveId: string) => void
@@ -1710,12 +1696,6 @@ function ScheduleCard({
           >
             <Plus /> Add wave
           </Button>
-          {multi && extraCost > 0.005 && (
-            <p className="text-right text-xs text-muted-foreground">
-              Waves add {fmtMoney(extraCost)} compared with one mailing. Smaller print runs cost
-              more per piece. <PriceTable />
-            </p>
-          )}
         </div>
       </CardContent>
     </Card>
@@ -1785,11 +1765,7 @@ function WaveRow({
   const dateError = view.issues.some(
     (i) => i.kind === "duplicate" || i.kind === "early" || (showErrors && i.kind === "date")
   )
-  // Shown from 0, also for a new, empty wave.
-  const below = view.residences < WAVE_MINIMUM
   const title = `Wave ${view.index + 1}`
-  // The table names each route's place when the campaign has routes in more than one.
-  const multiPlace = new Set(views.flatMap((v) => v.routes.map((r) => r.location))).size > 1
 
   return (
     <li data-wave-issue={hasIssues || undefined}>
@@ -1818,17 +1794,15 @@ function WaveRow({
               </span>
               <span className="block truncate text-xs text-muted-foreground">
                 {view.routes.length} {view.routes.length === 1 ? "route" : "routes"}
-                {/* While the wave is below the minimum, this line says how far it is. No bar here: the bar is in the map dialog. */}
-                {below && (
-                  <>
-                    {" · "}
-                    <span className="tabular-nums">{fmtNum(WAVE_MINIMUM - view.residences)}</span> more
-                    to reach the {fmtNum(WAVE_MINIMUM)} minimum
-                  </>
-                )}
               </span>
             </span>
           </CollapsibleTrigger>
+
+          {/* Same pattern as the price: the current value in black, the minimum in grey below it. */}
+          <div className="w-32 shrink-0 tabular-nums">
+            <div className="font-medium whitespace-nowrap">{fmtNum(view.residences)} residences</div>
+            <div className="text-xs text-muted-foreground">Min. {fmtNum(WAVE_MINIMUM)}</div>
+          </div>
 
           <DatePicker
             value={view.wave.date}
@@ -1891,7 +1865,7 @@ function WaveRow({
                 <TableHeader>
                   <TableRow>
                     <TableHead className="pl-3">Route</TableHead>
-                    {multiPlace && <TableHead>Location</TableHead>}
+                    <TableHead>City</TableHead>
                     <TableHead>ZIP code</TableHead>
                     <TableHead className="text-right">Residences</TableHead>
                     <TableHead className="w-12 pr-3 text-right">
@@ -1906,20 +1880,12 @@ function WaveRow({
                         <TableCell className="pl-3">
                           <span className="flex items-center gap-2">
                             {/* The route number is a link to the route on the map. */}
-                            <button
-                              className="rounded-sm font-medium tabular-nums underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-                              title="Show on map"
-                              onClick={() => actions.showOnMap(r.id)}
-                            >
-                              {r.id}
-                            </button>
+                            <RouteLink id={r.id} onShow={actions.showOnMap} />
                           </span>
                         </TableCell>
-                        {multiPlace && (
-                          <TableCell className="max-w-40 truncate text-muted-foreground">
-                            {LOCATION_BY_ID[r.location]?.label}
-                          </TableCell>
-                        )}
+                        <TableCell className="max-w-40 truncate text-muted-foreground">
+                          {LOCATION_BY_ID[r.location]?.city ?? LOCATION_BY_ID[r.location]?.label}
+                        </TableCell>
                         <TableCell className="text-muted-foreground tabular-nums">{r.zip}</TableCell>
                         <TableCell className="text-right tabular-nums">
                           {fmtNum(r.residences)}

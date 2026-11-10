@@ -54,6 +54,7 @@ export async function searchPlaces(query: string, signal: AbortSignal): Promise<
         id: `place-${center[1].toFixed(5)},${center[0].toFixed(5)}`,
         label: title,
         detail,
+        city: [p.city ?? p.county, p.state].filter(Boolean).join(", ") || undefined,
         center,
         zips: zipsAround(p.postcode, center),
       }

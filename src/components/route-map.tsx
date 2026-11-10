@@ -149,6 +149,7 @@ type Props = MapTools & {
 export function RouteMap({
   routes,
   focus,
+  place,
   center,
   radius,
   colors,
@@ -171,6 +172,8 @@ export function RouteMap({
   const mapRef = React.useRef<MapLibre | null>(null)
   const [ready, setReady] = React.useState(false)
   const [hover, setHover] = React.useState<{ route: Route; x: number; y: number } | null>(null)
+  /** Set while the pointer is on the red dot of the searched place. */
+  const [placeHover, setPlaceHover] = React.useState<Point | null>(null)
   const [tool, setTool] = React.useState<"route" | "area">("route")
   /** Area tool: where the circle is, in pixels from the map's top-left corner */
   const [cursor, setCursor] = React.useState<Point | null>(null)
@@ -299,14 +302,27 @@ export function RouteMap({
       hovered.current = id
     }
 
+    const onPlace = (e: MapMouseEvent) =>
+      Boolean(map.getLayer("place")) && map.queryRenderedFeatures(e.point, { layers: ["place"] }).length > 0
+
     map.on("mousemove", (e) => {
       if (live.current.tool === "area") {
         setHovered(null)
         setHover(null)
+        setPlaceHover(null)
         setCursor({ x: e.point.x, y: e.point.y })
         setTouching(routesAt(map, live.current.routes, e.point).map((r) => r.id))
         return
       }
+      // The red dot of the searched place has its own card. It sits on top of the routes.
+      if (onPlace(e)) {
+        setHovered(null)
+        setHover(null)
+        setPlaceHover({ x: e.point.x, y: e.point.y })
+        map.getCanvas().style.cursor = "default"
+        return
+      }
+      setPlaceHover(null)
       const route = live.current.onToggle ? routeUnder(e) : undefined
       setHovered(route?.id ?? null)
       setHover(route ? { route, x: e.point.x, y: e.point.y } : null)
@@ -315,10 +331,14 @@ export function RouteMap({
     map.on("mouseout", () => {
       setHovered(null)
       setHover(null)
+      setPlaceHover(null)
       setCursor(null)
       setTouching([])
     })
-    map.on("movestart", () => setHover(null))
+    map.on("movestart", () => {
+      setHover(null)
+      setPlaceHover(null)
+    })
     // A drag pans the map and does not fire `click`, so a click always means "select".
     map.on("click", (e) => {
       if (live.current.tool === "area") {
@@ -326,6 +346,8 @@ export function RouteMap({
         if (hit.length) live.current.onAddArea?.(hit)
         return
       }
+      // A click on the place's dot does not select the route under it.
+      if (onPlace(e)) return
       const route = routeUnder(e)
       if (route) live.current.onToggle?.(route)
     })
@@ -448,6 +470,34 @@ export function RouteMap({
             height: AREA_RADIUS * 2,
           }}
         />
+      )}
+
+      {placeHover && (
+        <div
+          className="pointer-events-none absolute z-10 w-max max-w-60 overflow-hidden rounded-lg bg-popover text-xs text-popover-foreground shadow-lg ring-1 ring-foreground/10"
+          style={{
+            left: Math.min(placeHover.x + 14, (ref.current?.clientWidth ?? 0) - 250 - (panelOpen ? PANEL_WIDTH : 0)),
+            ...(placeHover.y > (ref.current?.clientHeight ?? 0) - 110
+              ? { bottom: (ref.current?.clientHeight ?? 0) - placeHover.y + 10 }
+              : { top: placeHover.y + 14 }),
+          }}
+        >
+          <div className="flex items-start gap-2 px-3 py-2">
+            {/* The same dot as on the map, so the card reads as its label. */}
+            <span
+              aria-hidden
+              className="mt-[0.3125rem] size-2 shrink-0 rounded-full bg-primary ring-2 ring-primary/20"
+            />
+            <div className="min-w-0">
+              <div className="text-[0.8125rem] leading-snug font-medium">{place}</div>
+              <div className="text-muted-foreground">Search location</div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-6 border-t bg-muted/60 px-3 py-1.5">
+            <span className="text-muted-foreground">Routes shown</span>
+            <span className="font-medium tabular-nums">Within {radius} mi</span>
+          </div>
+        </div>
       )}
 
       {hover && (

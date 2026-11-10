@@ -95,6 +95,8 @@ export type Location = {
   label: string
   /** Second line in the search results: street, city, state */
   detail?: string
+  /** City and state of a searched place, for example "New York, New York". Suggested places are cities already. */
+  city?: string
   /** [longitude, latitude] */
   center: [number, number]
   zips: string[][]
