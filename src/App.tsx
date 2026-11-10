@@ -140,6 +140,12 @@ import {
 
 type State = { waves: Wave[]; assignment: Assignment }
 
+/**
+ * True after the user clicked Continue to Design while something was still missing. Until then the
+ * page shows what is unfinished calmly (progress bars, empty fields); after it, as explicit errors.
+ */
+const ShowErrors = React.createContext(false)
+
 /** Value of the wave picker when a click on a route applies to every wave. */
 const ALL_WAVES = "all"
 
@@ -245,6 +251,27 @@ export function App() {
   const singleTotal = residences * pricePerPiece(residences)
   const issueCount = views.reduce((s, v) => s + v.issues.length, 0)
   const ready = routeCount > 0 && issueCount === 0
+  const [showErrors, setShowErrors] = React.useState(false)
+  // Once everything is fixed, the page goes back to its calm state.
+  React.useEffect(() => {
+    if (ready) setShowErrors(false)
+  }, [ready])
+  /** Continue to Design: goes on when the campaign is ready; if not, shows what blocks it. */
+  const onContinue = () => {
+    if (ready) {
+      toast("Next step: Design. It is not part of this prototype.")
+      return
+    }
+    setShowErrors(true)
+    // Wait for the errors to render, then go to the first one.
+    setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(
+        routeCount === 0 ? '[aria-label="Carrier routes map"]' : "[data-wave-issue]"
+      )
+      target?.scrollIntoView({ behavior: "smooth", block: "center" })
+      if (routeCount > 0) target?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true })
+    })
+  }
 
   const colors = React.useMemo(() => {
     const byWave = Object.fromEntries(views.map((v) => [v.wave.id, v.color]))
@@ -457,6 +484,7 @@ export function App() {
 
   return (
     <TooltipProvider>
+      <ShowErrors.Provider value={showErrors}>
       <div className="flex min-h-svh bg-muted/40 text-sm">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
@@ -519,7 +547,7 @@ export function App() {
                 pieces={pieces}
                 total={total}
                 issueCount={issueCount}
-                ready={ready}
+                onContinue={onContinue}
               />
             </div>
           </main>
@@ -578,6 +606,7 @@ export function App() {
                 onClick={() => {
                   setPreset(key)
                   resetState(PRESETS[key].build())
+                  setShowErrors(false)
                 }}
               >
                 {PRESETS[key].label}
@@ -586,6 +615,7 @@ export function App() {
           </div>
         </div>
       </div>
+      </ShowErrors.Provider>
     </TooltipProvider>
   )
 }
@@ -1297,6 +1327,7 @@ function TargetingCard({
   onOpenMap: () => void
 }) {
   const [filtersOpen, setFiltersOpen] = React.useState(false)
+  const showErrors = React.useContext(ShowErrors)
   return (
     <Card className="overflow-visible">
       <CardHeader>
@@ -1351,7 +1382,13 @@ function TargetingCard({
         </RouteMap>
         <div className="flex items-center justify-between">
           {routeCount === 0 ? (
-            <span className="text-muted-foreground">
+            <span
+              className={cn(
+                "flex items-center gap-1.5",
+                showErrors ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {showErrors && <CircleAlert className="size-3.5 shrink-0" />}
               No routes selected. Click a route on the map to add it to Wave 1.
             </span>
           ) : (
@@ -1708,8 +1745,10 @@ function MinimumBar({ view, className }: { view: WaveView; className?: string })
 }
 
 /** Problems the user must correct: a date that another wave uses, or one that is too early. */
-function IssueList({ view }: { view: WaveView }) {
-  const issues = view.issues.filter((issue) => issue.kind === "duplicate" || issue.kind === "early")
+function IssueList({ view, all }: { view: WaveView; all?: boolean }) {
+  const issues = all
+    ? view.issues
+    : view.issues.filter((issue) => issue.kind === "duplicate" || issue.kind === "early")
   if (issues.length === 0) return null
   return (
     <ul className="flex flex-col gap-1">
@@ -1738,8 +1777,14 @@ function WaveRow({
   const others = views.filter((v) => v.wave.id !== view.wave.id)
   const taken = others.flatMap((v) => (v.wave.date ? [v.wave.date] : []))
   const hasIssues = view.issues.length > 0
-  // Only a wrong date is an error. Too few residences and a missing date are things still to do.
-  const hasErrors = view.issues.some((i) => i.kind === "duplicate" || i.kind === "early")
+  // A wrong date is always an error. Too few residences and a missing date are things still to
+  // do: they turn into errors only after the user clicked Continue to Design.
+  const showErrors = React.useContext(ShowErrors)
+  const hasErrors =
+    (showErrors && hasIssues) || view.issues.some((i) => i.kind === "duplicate" || i.kind === "early")
+  const dateError = view.issues.some(
+    (i) => i.kind === "duplicate" || i.kind === "early" || (showErrors && i.kind === "date")
+  )
   // Shown from 0, also for a new, empty wave.
   const below = view.residences < WAVE_MINIMUM
   const title = `Wave ${view.index + 1}`
@@ -1797,7 +1842,7 @@ function WaveRow({
             value={view.wave.date}
             onChange={(d) => actions.setDate(view.wave.id, d)}
             taken={taken}
-            invalid={hasErrors}
+            invalid={dateError}
             className="w-40 gap-1.5 px-2.5"
           />
 
@@ -1836,7 +1881,7 @@ function WaveRow({
 
         {hasErrors && (
           <div className="border-t border-destructive/30 bg-destructive/5 px-3 py-2">
-            <IssueList view={view} />
+            <IssueList view={view} all={showErrors} />
           </div>
         )}
 
@@ -2129,7 +2174,7 @@ function SummaryCard({
   pieces,
   total,
   issueCount,
-  ready,
+  onContinue,
 }: {
   name: string
   locations: Location[]
@@ -2139,8 +2184,9 @@ function SummaryCard({
   pieces: number
   total: number
   issueCount: number
-  ready: boolean
+  onContinue: () => void
 }) {
+  const showErrors = React.useContext(ShowErrors)
   const multi = views.length > 1
   const pending = <span className="text-muted-foreground">Pending</span>
   const rows: [string, React.ReactNode][] = [
@@ -2196,7 +2242,7 @@ function SummaryCard({
                     <span className="flex-1 truncate text-muted-foreground">
                       {fmtDate(v.wave.date, "MMM d")}
                     </span>
-                    {v.issues.length > 0 && (
+                    {showErrors && v.issues.length > 0 && (
                       <CircleAlert className="size-3.5 text-destructive" aria-label="Needs fixing" />
                     )}
                     <span className="font-medium tabular-nums">{fmtMoney(v.subtotal)}</span>
@@ -2209,7 +2255,11 @@ function SummaryCard({
         </ScrollArea>
 
         <Separator />
-        {issueCount > 0 && routeCount > 0 ? (
+        {showErrors && routeCount === 0 ? (
+          <Badge variant="destructive" className="self-center">
+            <CircleAlert /> Choose routes on the map
+          </Badge>
+        ) : showErrors && issueCount > 0 ? (
           // Works like a form's error summary: it takes the user to the first wave that needs fixing.
           <button
             className="group self-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-destructive/30"
@@ -2230,7 +2280,8 @@ function SummaryCard({
             <Check className="size-3.5 text-emerald-600" /> Campaign saved
           </div>
         )}
-        <Button size="lg" className="h-10 w-full shrink-0" disabled={!ready}>
+        {/* Always clickable: a click with something missing shows what blocks it. */}
+        <Button size="lg" className="h-10 w-full shrink-0" onClick={onContinue}>
           Continue to Design
         </Button>
       </CardContent>
