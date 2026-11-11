@@ -136,6 +136,8 @@ type Props = MapTools & {
   onToggle?: (route: Route) => void
   /** Ids of the routes that fit the audience filters. They get a marker and a tint. */
   highlight?: Set<string>
+  /** Id of one route to point out, for example while the pointer is on its row in a list. */
+  spotlight?: string | null
   /** Zoom with the scroll wheel alone. Off for a map inside a scrolling page: there the wheel scrolls the page. */
   scrollZoom?: boolean
   /** Shown above the zoom buttons, with the other view controls (the Open map button) */
@@ -156,6 +158,7 @@ export function RouteMap({
   hint,
   onToggle,
   highlight,
+  spotlight,
   scrollZoom = true,
   viewControl,
   sidePanel,
@@ -223,7 +226,8 @@ export function RouteMap({
       const hoverOn = ["boolean", ["feature-state", "hover"], false]
       const touchOn = ["boolean", ["get", "touching"], false]
       const fitOn = ["boolean", ["get", "fit"], false]
-      const strong = ["case", ["any", hoverOn, touchOn], 0.6, 0.42]
+      const spotOn = ["boolean", ["feature-state", "spot"], false]
+      const strong = ["case", spotOn, 0.8, ["any", hoverOn, touchOn], 0.6, 0.42]
       const add = (layer: Record<string, unknown>) => map.addLayer(layer as never, labels)
       add({
         id: "routes-empty",
@@ -232,7 +236,7 @@ export function RouteMap({
         filter: ["!", ["has", "color"]],
         paint: {
           "fill-color": INK,
-          "fill-opacity": ["case", touchOn, 0.14, hoverOn, 0.1, fitOn, 0.1, 0],
+          "fill-opacity": ["case", spotOn, 0.3, touchOn, 0.14, hoverOn, 0.1, fitOn, 0.1, 0],
         },
       })
       add({
@@ -262,6 +266,12 @@ export function RouteMap({
         source: "routes",
         filter: ["has", "color"],
         paint: { "line-color": ["get", "color"], "line-width": 2 },
+      })
+      add({
+        id: "routes-spot",
+        type: "line",
+        source: "routes",
+        paint: { "line-color": INK, "line-width": 2.5, "line-opacity": ["case", spotOn, 1, 0] },
       })
       add({
         id: "fits",
@@ -386,6 +396,16 @@ export function RouteMap({
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, placeKey])
+
+  // Point out one route: a darker fill and a thick outline.
+  React.useEffect(() => {
+    const map = mapRef.current
+    if (!map || !ready || !spotlight) return
+    map.setFeatureState({ source: "routes", id: spotlight }, { spot: true })
+    return () => {
+      if (map.getSource("routes")) map.setFeatureState({ source: "routes", id: spotlight }, { spot: false })
+    }
+  }, [spotlight, ready])
 
   // Show one route. This runs after the fly-to-place above, so it wins when the place also changed.
   const focusKey = focus?.key
@@ -519,7 +539,7 @@ export function RouteMap({
           </div>
           {highlight?.has(hover.route.id) && (
             <div className="flex items-center gap-1.5 border-t px-3 py-1.5">
-              <span className="size-2.5 rounded-full bg-foreground" /> Fits your audience filters
+              <span className="size-2.5 rounded-full bg-foreground" /> Suggested for your audience
             </div>
           )}
           {hint?.(hover.route)}

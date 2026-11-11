@@ -28,7 +28,8 @@ Then open the address the terminal prints (usually http://localhost:5173).
   loads routes within the chosen radius.
 - **Add routes to**: choose a wave, or "All waves", then click routes on the map. The Area tool
   adds every route under the circle.
-- **Audience filters**: mark the routes that fit an audience, then add them to a wave.
+- **Route suggestions**: choose an audience, click "Suggest routes", then add the suggested routes
+  to a wave.
 - **Mailing schedule**: set a date for each wave, see its price, and open a wave to see its routes.
 
 ## What is real and what is not
@@ -38,7 +39,7 @@ Then open the address the terminal prints (usually http://localhost:5173).
 | Street map and place search | Real (OpenStreetMap data, through OpenFreeMap and Photon) |
 | Carrier route shapes, residences per route, ZIP codes on routes | Generated placeholders |
 | Audience data per route | Generated placeholders |
-| Price per piece | Placeholder table in `src/lib/eddm.ts` |
+| Prices | Placeholder table in `src/lib/eddm.ts`. The price per piece is not shown in the interface. |
 | Business rules (1,000 minimum for each wave, weekdays only, 7 business days out, 360 days ahead, no two waves on one date) | Implemented as in the brief |
 
 The map credits are hidden in this prototype. A public version must credit OpenStreetMap and

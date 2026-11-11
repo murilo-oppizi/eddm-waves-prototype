@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
   CircleQuestionMark,
   ChevronRight,
   CircleAlert,
@@ -20,7 +21,7 @@ import {
   Plus,
   Search,
   Settings,
-  SlidersHorizontal,
+  Sparkles,
   X,
   MapPin,
   Merge,
@@ -55,7 +56,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Dialog,
   DialogContent,
@@ -82,7 +87,11 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
@@ -91,6 +100,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { DotOrb } from "@/components/dot-orb"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Toaster } from "@/components/ui/sonner"
@@ -102,7 +112,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import {
   AUDIENCE,
   LOCATIONS,
@@ -115,7 +130,8 @@ import {
   addLocation,
   buildWaveViews,
   countFilters,
-  fitsAudience,
+  suggestRoutes,
+  SUGGEST_PAGE,
   fmtDate,
   fmtMoney,
   fmtNum,
@@ -153,34 +169,55 @@ const firstDate = SPRING_START > MIN_DATE ? SPRING_START : MIN_DATE
 function demoRoutes() {
   // A contiguous block north of the river, like a real service area.
   // The routes closest to the centre of Richmond.
-  return ROUTES.filter((r) => r.location === "richmond" && r.reach <= 0.55).map((r) => r.id)
+  return ROUTES.filter((r) => r.location === "richmond" && r.reach <= 0.55).map(
+    (r) => r.id
+  )
 }
 
 function makeState(groups: string[][], dates: (Date | null)[]): State {
-  const waves = groups.map((_, i) => ({ id: newWaveId(), date: dates[i] ?? null, color: i }))
+  const waves = groups.map((_, i) => ({
+    id: newWaveId(),
+    date: dates[i] ?? null,
+    color: i,
+  }))
   const assignment: Assignment = {}
-  groups.forEach((ids, i) => ids.forEach((id) => (assignment[id] = [...(assignment[id] ?? []), waves[i].id])))
+  groups.forEach((ids, i) =>
+    ids.forEach(
+      (id) => (assignment[id] = [...(assignment[id] ?? []), waves[i].id])
+    )
+  )
   return { waves, assignment }
 }
 
 const PRESETS = {
   empty: { label: "Empty", build: () => makeState([[]], [null]) },
-  single: { label: "1 wave", build: () => makeState([demoRoutes()], [firstDate]) },
+  single: {
+    label: "1 wave",
+    build: () => makeState([demoRoutes()], [firstDate]),
+  },
   waves: {
     label: "3 waves",
-    build: () => makeState(splitRoutes(demoRoutes(), 3), scheduleDates(firstDate, 3, 1)),
+    build: () =>
+      makeState(splitRoutes(demoRoutes(), 3), scheduleDates(firstDate, 3, 1)),
   },
   repeat: {
     // The same routes mailed twice, 18 days apart.
     label: "Repeat",
-    build: () => makeState([demoRoutes(), demoRoutes()], [firstDate, nextWeekday(addDays(firstDate, 18))]),
+    build: () =>
+      makeState(
+        [demoRoutes(), demoRoutes()],
+        [firstDate, nextWeekday(addDays(firstDate, 18))]
+      ),
   },
   issues: {
     label: "Needs fixing",
     build: () => {
       const [a, b, c] = splitRoutes(demoRoutes(), 3)
       const moved = c.slice(0, c.length - 1)
-      return makeState([a, [...b, ...moved], c.slice(-1)], [firstDate, addDays(firstDate, 7), null])
+      return makeState(
+        [a, [...b, ...moved], c.slice(-1)],
+        [firstDate, addDays(firstDate, 7), null]
+      )
     },
   },
 } satisfies Record<string, { label: string; build: () => State }>
@@ -203,7 +240,8 @@ export function App() {
       present: update(h.present),
       future: [],
     }))
-  const resetState = (next: State) => setHistory({ past: [], present: next, future: [] })
+  const resetState = (next: State) =>
+    setHistory({ past: [], present: next, future: [] })
   const [name, setName] = React.useState("EDDM Campaign - 1")
   const [mapOpen, setMapOpen] = React.useState(false)
   /** The route the user asked to see on the map. */
@@ -211,6 +249,16 @@ export function App() {
   const [splitOpen, setSplitOpen] = React.useState(false)
   const [activeWave, setActiveWave] = React.useState<string | null>(null)
   const [filters, setFilters] = React.useState<AudienceFilters>({})
+  /** The filters the current suggestions come from. Null until the user asks for suggestions. */
+  const [suggested, setSuggested] = React.useState<AudienceFilters | null>(null)
+  /** How many suggestions the list shows. "Load more" adds a page. */
+  const [shown, setShown] = React.useState(SUGGEST_PAGE)
+  /** True between the click on "Suggest routes" and the results. */
+  const [loading, setLoading] = React.useState(false)
+  const loadTimer = React.useRef<number | undefined>(undefined)
+  React.useEffect(() => () => window.clearTimeout(loadTimer.current), [])
+  /** The suggested route under the pointer in the list. The map points it out. */
+  const [spotId, setSpotId] = React.useState<string | null>(null)
   /** Id of the wave the user asked to remove, while the confirmation is open. */
   const [removing, setRemoving] = React.useState<string | null>(null)
   /** The location the map shows. Routes selected in other locations stay in the campaign. */
@@ -222,14 +270,21 @@ export function App() {
   const loaded = React.useMemo(
     () =>
       ROUTES.filter(
-        (r) => (r.location === locationId && r.reach <= radius) || state.assignment[r.id]
+        (r) =>
+          (r.location === locationId && r.reach <= radius) ||
+          state.assignment[r.id]
       ),
     [locationId, radius, state.assignment]
   )
 
-  const views = React.useMemo(() => buildWaveViews(state.waves, state.assignment), [state])
+  const views = React.useMemo(
+    () => buildWaveViews(state.waves, state.assignment),
+    [state]
+  )
   const multi = views.length > 1
-  const activeId = views.some((v) => v.wave.id === activeWave) ? activeWave! : views[0].wave.id
+  const activeId = views.some((v) => v.wave.id === activeWave)
+    ? activeWave!
+    : views[0].wave.id
   /** "All waves" is selected: a click adds a route to every wave, or removes it from every wave. */
   const allActive = activeWave === ALL_WAVES && multi
   const activeKey = allActive ? ALL_WAVES : activeId
@@ -242,7 +297,10 @@ export function App() {
   )
   const routeCount = routeIds.length
   /** Residences on the selected routes, each route counted once. */
-  const residences = routeIds.reduce((s, id) => s + ROUTE_BY_ID[id].residences, 0)
+  const residences = routeIds.reduce(
+    (s, id) => s + ROUTE_BY_ID[id].residences,
+    0
+  )
   /** Pieces printed: a route in three waves counts three times. */
   const pieces = views.reduce((s, v) => s + v.residences, 0)
   const total = views.reduce((s, v) => s + v.subtotal, 0)
@@ -264,10 +322,15 @@ export function App() {
     // Wait for the errors to render, then go to the first one.
     setTimeout(() => {
       const target = document.querySelector<HTMLElement>(
-        routeCount === 0 ? '[aria-label="Carrier routes map"]' : "[data-wave-issue]"
+        routeCount === 0
+          ? '[aria-label="Carrier routes map"]'
+          : "[data-wave-issue]"
       )
       target?.scrollIntoView({ behavior: "smooth", block: "center" })
-      if (routeCount > 0) target?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true })
+      if (routeCount > 0)
+        target
+          ?.querySelector<HTMLElement>("button")
+          ?.focus({ preventScroll: true })
     })
   }
 
@@ -276,7 +339,9 @@ export function App() {
     return Object.fromEntries(
       Object.entries(state.assignment).map(([r, ids]) => [
         r,
-        views.filter((v) => ids.includes(v.wave.id)).map((v) => byWave[v.wave.id]),
+        views
+          .filter((v) => ids.includes(v.wave.id))
+          .map((v) => byWave[v.wave.id]),
       ])
     )
   }, [views, state.assignment])
@@ -323,10 +388,20 @@ export function App() {
     )
   }
 
-  // Audience filters apply to the location on the map.
+  // Suggestions are the routes around the location on the map that fit the audience.
+  const suggestion = React.useMemo(
+    () =>
+      suggested
+        ? suggestRoutes(
+            loaded.filter((r) => r.location === locationId),
+            suggested
+          )
+        : { ranked: [], percent: {} },
+    [suggested, locationId, loaded]
+  )
   const fit = React.useMemo(
-    () => loaded.filter((r) => r.location === locationId && fitsAudience(r, filters)),
-    [filters, locationId, loaded]
+    () => suggestion.ranked.slice(0, shown),
+    [suggestion, shown]
   )
   const fitIds = React.useMemo(() => new Set(fit.map((r) => r.id)), [fit])
   const fitToAdd = fit.filter(
@@ -334,7 +409,12 @@ export function App() {
   )
 
   /** Adds or removes one route in one wave. A route that is left in no wave is no longer selected. */
-  const withRoute = (assignment: Assignment, routeId: string, waveId: string, on: boolean) => {
+  const withRoute = (
+    assignment: Assignment,
+    routeId: string,
+    waveId: string,
+    on: boolean
+  ) => {
     const ids = (assignment[routeId] ?? []).filter((id) => id !== waveId)
     if (on) ids.push(waveId)
     const next = { ...assignment }
@@ -351,7 +431,10 @@ export function App() {
         assignment: (() => {
           const ids = s.assignment[route.id] ?? []
           const on = !targetIds.every((id) => ids.includes(id))
-          return targetIds.reduce((a, id) => withRoute(a, route.id, id, on), s.assignment)
+          return targetIds.reduce(
+            (a, id) => withRoute(a, route.id, id, on),
+            s.assignment
+          )
         })(),
       }))
     },
@@ -359,7 +442,8 @@ export function App() {
       setState((s) => ({
         ...s,
         assignment: routes.reduce(
-          (a, r) => targetIds.reduce((b, id) => withRoute(b, r.id, id, true), a),
+          (a, r) =>
+            targetIds.reduce((b, id) => withRoute(b, r.id, id, true), a),
           s.assignment
         ),
       }))
@@ -368,11 +452,17 @@ export function App() {
     removeFromActive(routeId: string) {
       setState((s) => ({
         ...s,
-        assignment: targetIds.reduce((a, id) => withRoute(a, routeId, id, false), s.assignment),
+        assignment: targetIds.reduce(
+          (a, id) => withRoute(a, routeId, id, false),
+          s.assignment
+        ),
       }))
     },
     setRouteWave(routeId: string, waveId: string, on: boolean) {
-      setState((s) => ({ ...s, assignment: withRoute(s.assignment, routeId, waveId, on) }))
+      setState((s) => ({
+        ...s,
+        assignment: withRoute(s.assignment, routeId, waveId, on),
+      }))
     },
     setDate(waveId: string, date: Date) {
       setState((s) => ({
@@ -387,10 +477,14 @@ export function App() {
       let date: Date | null = null
       if (last) {
         date = nextWeekday(addDays(last, 7))
-        while (taken.includes(date.toDateString())) date = nextWeekday(addDays(date, 7))
+        while (taken.includes(date.toDateString()))
+          date = nextWeekday(addDays(date, 7))
       }
       const used = state.waves.map((w) => w.color)
-      const color = Array.from({ length: MAX_WAVES }, (_, n) => n).find((n) => !used.includes(n)) ?? 0
+      const color =
+        Array.from({ length: MAX_WAVES }, (_, n) => n).find(
+          (n) => !used.includes(n)
+        ) ?? 0
       const wave = { id: newWaveId(), date, color }
       setActiveWave(wave.id)
       setState((s) => ({ ...s, waves: [...s.waves, wave] }))
@@ -425,12 +519,17 @@ export function App() {
     },
     applySplit(count: number, first: Date, everyWeeks: number) {
       setState((s) =>
-        makeState(splitRoutes(Object.keys(s.assignment), count), scheduleDates(first, count, everyWeeks))
+        makeState(
+          splitRoutes(Object.keys(s.assignment), count),
+          scheduleDates(first, count, everyWeeks)
+        )
       )
       offerUndo(`Routes distributed into ${count} waves.`)
     },
     sendOnOneDate() {
-      setState((s) => makeState([Object.keys(s.assignment)], [views[0].wave.date]))
+      setState((s) =>
+        makeState([Object.keys(s.assignment)], [views[0].wave.date])
+      )
       offerUndo(`${views.length} waves merged into one.`)
     },
   }
@@ -450,9 +549,39 @@ export function App() {
   const audience: AudienceProps = {
     filters,
     onChange: setFilters,
+    suggested: suggested !== null,
+    loading,
+    onSuggest: () => {
+      // Prototype: the real search takes time, so the results show after a wait.
+      setLoading(true)
+      window.clearTimeout(loadTimer.current)
+      loadTimer.current = window.setTimeout(() => {
+        setSuggested(filters)
+        setShown(SUGGEST_PAGE)
+        setLoading(false)
+      }, SUGGEST_WAIT)
+    },
+    onEdit: () => {
+      window.clearTimeout(loadTimer.current)
+      setLoading(false)
+      setSuggested(null)
+    },
+    spotId,
+    onSpot: setSpotId,
+    routes: fit,
+    more: Math.max(0, suggestion.ranked.length - shown),
+    onMore: () => setShown((n) => n + SUGGEST_PAGE),
+    percent: suggestion.percent,
+    rate: views
+      .filter((v) => targetIds.includes(v.wave.id))
+      .reduce((sum, v) => sum + v.price, 0),
     ids: fitIds,
+    isAdded: (r) =>
+      targetIds.every((id) => state.assignment[r.id]?.includes(id)),
     toAdd: fitToAdd.length,
     activeLabel,
+    onAdd: (r) => actions.addRoutes([r]),
+    onRemove: (r) => actions.removeFromActive(r.id),
     onAddAll: () => actions.addRoutes(fitToAdd),
   }
 
@@ -467,13 +596,21 @@ export function App() {
     onUndo: () =>
       setHistory((h) =>
         h.past.length
-          ? { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] }
+          ? {
+              past: h.past.slice(0, -1),
+              present: h.past[h.past.length - 1],
+              future: [h.present, ...h.future],
+            }
           : h
       ),
     onRedo: () =>
       setHistory((h) =>
         h.future.length
-          ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
+          ? {
+              past: [...h.past, h.present],
+              present: h.future[0],
+              future: h.future.slice(1),
+            }
           : h
       ),
     canUndo: history.past.length > 0,
@@ -483,135 +620,143 @@ export function App() {
   return (
     <TooltipProvider>
       <ShowErrors.Provider value={showErrors}>
-      <div className="flex min-h-svh bg-muted/40 text-sm">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Stepper />
-          <main className="mx-auto w-full max-w-[1200px] flex-1 px-8 py-8">
-            <h1 className="mb-6 font-heading text-xl font-semibold tracking-tight">
-              New EDDM Campaign
-            </h1>
-            <div className="grid grid-cols-[minmax(0,1fr)_340px] items-start gap-6">
-              <div className="flex flex-col gap-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Campaign Details</CardTitle>
-                    <CardDescription>Start by setting a name for your campaign.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-2">
-                    <Label htmlFor="name">Campaign name</Label>
-                    <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
-                  </CardContent>
-                </Card>
+        <div className="flex min-h-svh bg-muted/40 text-sm">
+          <Sidebar />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <Stepper />
+            <main className="mx-auto w-full max-w-[1200px] flex-1 px-8 py-8">
+              <h1 className="mb-6 font-heading text-xl font-semibold tracking-tight">
+                New EDDM Campaign
+              </h1>
+              <div className="grid grid-cols-[minmax(0,1fr)_340px] items-start gap-6">
+                <div className="flex flex-col gap-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Campaign Details</CardTitle>
+                      <CardDescription>
+                        Start by setting a name for your campaign.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-2">
+                      <Label htmlFor="name">Campaign name</Label>
+                      <Input
+                        id="name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                    </CardContent>
+                  </Card>
 
-                <TargetingCard
-                  colors={colors}
-                  hint={hint}
-                  tools={mapTools}
-                  audience={audience}
-                  location={location}
-                  onLocationChange={setLocationId}
+                  <TargetingCard
+                    colors={colors}
+                    hint={hint}
+                    tools={mapTools}
+                    audience={audience}
+                    location={location}
+                    onLocationChange={setLocationId}
+                    views={views}
+                    activeId={activeKey}
+                    onActiveChange={setActiveWave}
+                    onAddWave={actions.addWave}
+                    onRemoveWave={actions.removeWave}
+                    routeCount={routeCount}
+                    residences={residences}
+                    pieces={pieces}
+                    onToggle={actions.toggleRoute}
+                    onOpenMap={() => setMapOpen(true)}
+                  />
+
+                  <ScheduleCard
+                    views={views}
+                    residences={residences}
+                    actions={actions}
+                    onSplit={() => setSplitOpen(true)}
+                    onOpenMap={(waveId) => {
+                      setActiveWave(waveId)
+                      setMapOpen(true)
+                    }}
+                  />
+                </div>
+
+                <SummaryCard
+                  name={name}
+                  locations={usedLocations.length ? usedLocations : [location]}
                   views={views}
-                  activeId={activeKey}
-                  onActiveChange={setActiveWave}
-                  onAddWave={actions.addWave}
-                  onRemoveWave={actions.removeWave}
                   routeCount={routeCount}
                   residences={residences}
                   pieces={pieces}
-                  onToggle={actions.toggleRoute}
-                  onOpenMap={() => setMapOpen(true)}
-                />
-
-                <ScheduleCard
-                  views={views}
-                  residences={residences}
-                  actions={actions}
-                  onSplit={() => setSplitOpen(true)}
-                  onOpenMap={(waveId) => {
-                    setActiveWave(waveId)
-                    setMapOpen(true)
-                  }}
+                  total={total}
+                  issueCount={issueCount}
+                  onContinue={onContinue}
                 />
               </div>
+            </main>
+          </div>
 
-              <SummaryCard
-                name={name}
-                locations={usedLocations.length ? usedLocations : [location]}
-                views={views}
-                routeCount={routeCount}
-                residences={residences}
-                pieces={pieces}
-                total={total}
-                issueCount={issueCount}
-                onContinue={onContinue}
-              />
+          <MapDialog
+            open={mapOpen}
+            onOpenChange={setMapOpen}
+            views={views}
+            colors={colors}
+            hint={hint}
+            tools={mapTools}
+            audience={audience}
+            location={location}
+            onLocationChange={setLocationId}
+            activeId={activeKey}
+            onActiveChange={setActiveWave}
+            onAddWave={actions.addWave}
+            onRemoveWave={actions.removeWave}
+            onToggle={actions.toggleRoute}
+            onRemove={actions.removeFromActive}
+            onShow={actions.showOnMap}
+          />
+          <SplitDialog
+            key={String(splitOpen)}
+            open={splitOpen}
+            onOpenChange={setSplitOpen}
+            routeIds={Object.keys(state.assignment)}
+            residences={residences}
+            initialCount={multi ? views.length : 3}
+            initialDate={views[0].wave.date ?? firstDate}
+            singleTotal={singleTotal}
+            onApply={actions.applySplit}
+          />
+
+          <RemoveWaveDialog
+            view={views.find((v) => v.wave.id === removing)}
+            onCancel={() => setRemoving(null)}
+            onConfirm={() => {
+              if (removing) actions.removeWaveNow(removing)
+              setRemoving(null)
+            }}
+          />
+
+          <Toaster position="bottom-center" />
+
+          <div className="fixed bottom-4 left-4 z-40 flex w-52 flex-col gap-1.5 rounded-lg border border-dashed bg-background p-2.5 shadow-sm">
+            <span className="text-xs font-medium text-muted-foreground">
+              Prototype state
+            </span>
+            <div className="grid grid-cols-2 gap-1">
+              {(Object.keys(PRESETS) as PresetKey[]).map((key) => (
+                <Button
+                  key={key}
+                  size="xs"
+                  variant={preset === key ? "secondary" : "ghost"}
+                  aria-pressed={preset === key}
+                  onClick={() => {
+                    setPreset(key)
+                    resetState(PRESETS[key].build())
+                    setShowErrors(false)
+                  }}
+                >
+                  {PRESETS[key].label}
+                </Button>
+              ))}
             </div>
-          </main>
-        </div>
-
-        <MapDialog
-          open={mapOpen}
-          onOpenChange={setMapOpen}
-          views={views}
-          colors={colors}
-          hint={hint}
-          tools={mapTools}
-          audience={audience}
-          location={location}
-          onLocationChange={setLocationId}
-          activeId={activeKey}
-          onActiveChange={setActiveWave}
-          onAddWave={actions.addWave}
-          onRemoveWave={actions.removeWave}
-          onToggle={actions.toggleRoute}
-          onRemove={actions.removeFromActive}
-          onShow={actions.showOnMap}
-        />
-        <SplitDialog
-          key={String(splitOpen)}
-          open={splitOpen}
-          onOpenChange={setSplitOpen}
-          routeIds={Object.keys(state.assignment)}
-          residences={residences}
-          initialCount={multi ? views.length : 3}
-          initialDate={views[0].wave.date ?? firstDate}
-          singleTotal={singleTotal}
-          onApply={actions.applySplit}
-        />
-
-        <RemoveWaveDialog
-          view={views.find((v) => v.wave.id === removing)}
-          onCancel={() => setRemoving(null)}
-          onConfirm={() => {
-            if (removing) actions.removeWaveNow(removing)
-            setRemoving(null)
-          }}
-        />
-
-        <Toaster position="bottom-center" />
-
-        <div className="fixed bottom-4 left-4 z-40 flex w-52 flex-col gap-1.5 rounded-lg border border-dashed bg-background p-2.5 shadow-sm">
-          <span className="text-xs font-medium text-muted-foreground">Prototype state</span>
-          <div className="grid grid-cols-2 gap-1">
-            {(Object.keys(PRESETS) as PresetKey[]).map((key) => (
-              <Button
-                key={key}
-                size="xs"
-                variant={preset === key ? "secondary" : "ghost"}
-                aria-pressed={preset === key}
-                onClick={() => {
-                  setPreset(key)
-                  resetState(PRESETS[key].build())
-                  setShowErrors(false)
-                }}
-              >
-                {PRESETS[key].label}
-              </Button>
-            ))}
           </div>
         </div>
-      </div>
       </ShowErrors.Provider>
     </TooltipProvider>
   )
@@ -633,13 +778,20 @@ function RemoveWaveDialog({
   const shown = view ?? last.current
   const routes = shown?.routes.length ?? 0
   return (
-    <AlertDialog open={Boolean(view)} onOpenChange={(open) => !open && onCancel()}>
+    <AlertDialog
+      open={Boolean(view)}
+      onOpenChange={(open) => !open && onCancel()}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Remove Wave {(shown?.index ?? 0) + 1}?</AlertDialogTitle>
+          <AlertDialogTitle>
+            Remove Wave {(shown?.index ?? 0) + 1}?
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            Its {fmtNum(routes)} {routes === 1 ? "route" : "routes"} will not be mailed
-            {shown?.wave.date ? ` on ${fmtDate(shown.wave.date, "MMM d")}` : ""}.
+            Its {fmtNum(routes)} {routes === 1 ? "route" : "routes"} will not be
+            mailed
+            {shown?.wave.date ? ` on ${fmtDate(shown.wave.date, "MMM d")}` : ""}
+            .
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -688,7 +840,10 @@ function Sidebar() {
       </div>
       {NAV.map((item, i) =>
         "section" in item ? (
-          <div key={i} className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground uppercase">
+          <div
+            key={i}
+            className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground uppercase"
+          >
             {item.section}
           </div>
         ) : (
@@ -766,7 +921,9 @@ function WaveSelect({
         className
       )}
     >
-      <span className="px-1.5 text-xs whitespace-nowrap text-muted-foreground">Add routes to</span>
+      <span className="px-1.5 text-xs whitespace-nowrap text-muted-foreground">
+        Add routes to
+      </span>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           render={
@@ -810,14 +967,17 @@ function WaveSelect({
                   <span className="whitespace-nowrap">All waves</span>
                   {/* The sum of the waves below: a route in two waves counts twice, as it is mailed twice. */}
                   <span className="flex-1 truncate pl-1 text-xs font-normal text-muted-foreground tabular-nums">
-                    {fmtNum(views.reduce((sum, v) => sum + v.residences, 0))} residences
+                    {fmtNum(views.reduce((sum, v) => sum + v.residences, 0))}{" "}
+                    residences
                   </span>
                   {all && <Check className="size-3.5 shrink-0" />}
                 </button>
               </li>
             )}
             {/* "All waves" is a different kind of choice from one wave, so a divider sets it apart. */}
-            {views.length > 1 && <li role="separator" className="my-1 h-px bg-border" />}
+            {views.length > 1 && (
+              <li role="separator" className="my-1 h-px bg-border" />
+            )}
             {views.map((v) => {
               const current = !all && v.wave.id === active.wave.id
               return (
@@ -834,7 +994,9 @@ function WaveSelect({
                     )}
                   >
                     <WaveDot color={v.color} />
-                    <span className="whitespace-nowrap">Wave {v.index + 1}</span>
+                    <span className="whitespace-nowrap">
+                      Wave {v.index + 1}
+                    </span>
                     <span className="flex-1 truncate pl-1 text-xs font-normal text-muted-foreground tabular-nums">
                       {fmtNum(v.residences)} residences
                     </span>
@@ -880,7 +1042,10 @@ function WaveSelect({
         >
           <CircleQuestionMark />
         </IconButton>
-        <PopoverContent align="start" className="w-72 gap-0 overflow-hidden p-0">
+        <PopoverContent
+          align="start"
+          className="w-72 gap-0 overflow-hidden p-0"
+        >
           <div className="flex flex-col gap-1 px-3.5 py-3">
             <p className="font-medium">Waves</p>
             <p className="text-muted-foreground">
@@ -888,23 +1053,26 @@ function WaveSelect({
             </p>
           </div>
           <ol className="flex flex-col gap-2.5 border-t px-3.5 py-3">
-            {["Select a wave.", "Click a route to add it. Click it again to remove it."].map(
-              (step, i) => (
-                <li key={step} className="flex items-start gap-2.5">
-                  <span
-                    aria-hidden
-                    className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium tabular-nums"
-                  >
-                    {i + 1}
-                  </span>
-                  <span>{step}</span>
-                </li>
-              )
-            )}
+            {[
+              "Select a wave.",
+              "Click a route to add it. Click it again to remove it.",
+            ].map((step, i) => (
+              <li key={step} className="flex items-start gap-2.5">
+                <span
+                  aria-hidden
+                  className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium tabular-nums"
+                >
+                  {i + 1}
+                </span>
+                <span>{step}</span>
+              </li>
+            ))}
           </ol>
           <p className="flex items-baseline justify-between gap-4 border-t px-3.5 py-2.5 whitespace-nowrap">
             <span className="text-muted-foreground">Wave minimum</span>
-            <span className="font-medium tabular-nums">{fmtNum(WAVE_MINIMUM)} residences</span>
+            <span className="font-medium tabular-nums">
+              {fmtNum(WAVE_MINIMUM)} residences
+            </span>
           </p>
         </PopoverContent>
       </Popover>
@@ -915,41 +1083,108 @@ function WaveSelect({
 type AudienceProps = {
   filters: AudienceFilters
   onChange: (filters: AudienceFilters) => void
-  /** Ids of the routes that fit the filters */
+  /** True after "Suggest routes", until the user goes back to the filters */
+  suggested: boolean
+  /** True while the suggestions load */
+  loading: boolean
+  onSuggest: () => void
+  onEdit: () => void
+  spotId: string | null
+  onSpot: (routeId: string | null) => void
+  /** The suggested routes */
+  routes: Route[]
+  /** How many more routes "Load more" can show */
+  more: number
+  onMore: () => void
+  /** Route id -> how well it fits the audience, 0 to 100 */
+  percent: Record<string, number>
+  /** Price per residence in the selected wave. With "All waves", the sum of the waves' prices. */
+  rate: number
   ids: Set<string>
+  /** True when the route is already in the selected wave */
+  isAdded: (route: Route) => boolean
   /** How many of them are not in the selected wave yet */
   toAdd: number
   activeLabel: string
+  onAdd: (route: Route) => void
+  /** Takes the route out of the selected wave */
+  onRemove: (route: Route) => void
   onAddAll: () => void
 }
 
 /** Marker for a route that fits the filters. Same as the one on the map. */
-function FitDot() {
-  return <span aria-hidden className="inline-block size-2.5 shrink-0 rounded-full bg-foreground" />
+/** Prototype only: how long "Suggest routes" takes, in milliseconds. */
+const SUGGEST_WAIT = 4000
+
+/** Status lines while the suggestions load, as on the eddm.com hero. */
+const AI_STEPS = ["Analyzing routes", "Matching your audience", "Optimizing for cost"]
+
+/** The "Oppizi AI" line with the dot orb. Its status text walks through `AI_STEPS` during the wait. */
+function AiThinking() {
+  const [step, setStep] = React.useState(0)
+  React.useEffect(() => {
+    const timer = window.setInterval(
+      () => setStep((n) => Math.min(n + 1, AI_STEPS.length - 1)),
+      SUGGEST_WAIT / AI_STEPS.length
+    )
+    return () => window.clearInterval(timer)
+  }, [])
+  return (
+    <div className="flex flex-col items-center gap-3 text-center">
+      <DotOrb className="size-16 shrink-0" />
+      <div className="flex flex-col gap-0.5">
+        <span className="font-semibold">Oppizi AI</span>
+        <span className="text-shimmer">{AI_STEPS[step]}…</span>
+      </div>
+    </div>
+  )
 }
 
-/** "18 routes fit" */
-const fitText = (n: number) => `${n} ${n === 1 ? "route fits" : "routes fit"}`
+/** Fit scale: green from 70%, yellow from 50%, orange below. */
+const fitTone = (percent: number) =>
+  percent >= 70
+    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300"
+    : percent >= 50
+      ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+      : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-300"
+
+/** "84% fit", coloured by how well the route fits the audience. */
+function FitBadge({ percent }: { percent: number }) {
+  return (
+    <Badge
+      variant="secondary"
+      className={cn("h-4.5 px-1.5 font-medium tabular-nums", fitTone(percent))}
+    >
+      {percent}% fit
+    </Badge>
+  )
+}
+
+function FitDot() {
+  return (
+    <span
+      aria-hidden
+      className="inline-block size-2.5 shrink-0 rounded-full bg-foreground"
+    />
+  )
+}
 
 /**
- * Sits on top of the map: the Audience filters button next to `children`. It opens the filters
- * panel. The badge shows how many filters are set.
+ * Sits on top of the map: the Route suggestions button next to `children`. It opens the
+ * suggestions panel.
  */
 function AudienceButton({
-  audience,
   open,
   onOpenChange,
   side = "left",
   children,
 }: {
-  audience: AudienceProps
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Corner of the map it sits in */
   side?: "left" | "right"
   children?: React.ReactNode
 }) {
-  const count = countFilters(audience.filters)
   // On the right, the open panel covers this corner and has its own title and close button.
   if (side === "right" && open) return null
   return (
@@ -961,47 +1196,84 @@ function AudienceButton({
     >
       <div className="flex items-center gap-1.5">
         {children}
-        <div className={MAP_PILL}>
-          <Button
-            variant={open ? "secondary" : "ghost"}
-            size="sm"
-            aria-expanded={open}
-            onClick={() => onOpenChange(!open)}
-          >
-            <SlidersHorizontal /> Audience filters
-            {count > 0 && (
-              <Badge className="h-4.5 min-w-4.5 px-1 tabular-nums" aria-label={`${count} selected`}>
-                {count}
-              </Badge>
-            )}
-          </Button>
-        </div>
+        {/* The one control on the map with the Oppizi AI ring: it is the feature to notice. */}
+        <AiRing>
+          <div className={cn(MAP_PILL, "relative")}>
+            <Button
+              variant={open ? "secondary" : "ghost"}
+              size="sm"
+              aria-expanded={open}
+              onClick={() => onOpenChange(!open)}
+            >
+              <Sparkles /> Route suggestions
+            </Button>
+          </div>
+        </AiRing>
       </div>
     </div>
   )
 }
 
-/** The filters panel. It sits inside the map, on the right, and stays open while the user clicks routes. */
-function AudiencePanel({ audience, onClose }: { audience: AudienceProps; onClose: () => void }) {
-  const { filters, onChange, ids, toAdd, activeLabel, onAddAll } = audience
+/** The Oppizi AI ring: a pink-to-indigo arc that circles `children`, with a soft halo behind it. */
+function AiRing({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="relative shrink-0">
+      <span
+        aria-hidden
+        className="ai-glow absolute -inset-px rounded-[calc(var(--radius-lg)+1px)] opacity-50 blur-[3px] [--glow-speed:3.5s]"
+      />
+      <span
+        aria-hidden
+        className="ai-glow absolute -inset-px rounded-[calc(var(--radius-lg)+1px)] [--glow-speed:3.5s]"
+      />
+      {children}
+    </div>
+  )
+}
+
+/**
+ * The Route suggestions panel. It sits inside the map, on the right. Step 1: choose the audience.
+ * Step 2: the routes that fit, to add one by one or all at once.
+ */
+function AudiencePanel({
+  audience,
+  onClose,
+}: {
+  audience: AudienceProps
+  onClose: () => void
+}) {
+  const {
+    filters,
+    onChange,
+    suggested,
+    routes,
+    toAdd,
+    activeLabel,
+  } = audience
   const count = countFilters(filters)
   const toggle = (categoryId: string, option: string) => {
     const list = filters[categoryId] ?? []
     onChange({
       ...filters,
-      [categoryId]: list.includes(option) ? list.filter((o) => o !== option) : [...list, option],
+      [categoryId]: list.includes(option)
+        ? list.filter((o) => o !== option)
+        : [...list, option],
     })
   }
+  const residences = routes.reduce((sum, r) => sum + r.residences, 0)
   return (
-    <section aria-label="Audience filters" className="flex min-h-0 flex-1 flex-col">
+    <section
+      aria-label="Route suggestions"
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <div className="flex flex-col gap-0.5 py-2.5 pr-2 pl-3.5">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium">Audience filters</h3>
+          <h3 className="font-medium">Route suggestions</h3>
           {/* No tooltip: an X that closes a panel needs no explanation. */}
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Close filters"
+            aria-label="Close route suggestions"
             className="ml-auto"
             onClick={onClose}
           >
@@ -1009,66 +1281,185 @@ function AudiencePanel({ audience, onClose }: { audience: AudienceProps; onClose
           </Button>
         </div>
         <p className="pr-1.5 text-xs text-muted-foreground">
-          Select the people you want to reach. The map marks the routes that fit.
+          {suggested && !audience.loading
+            ? "The routes that best fit your filters."
+            : "Select the people you want to reach. We suggest the routes that fit."}
         </p>
       </div>
       <Separator />
-      <ScrollArea className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-col gap-4 p-3.5">
-          {AUDIENCE.map((cat) => (
-            <div key={cat.id} role="group" aria-labelledby={`aud-${cat.id}`} className="flex flex-col gap-2">
-              <span id={`aud-${cat.id}`} className="text-xs font-medium">
-                {cat.label}
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {cat.options.map((option) => {
-                  const on = Boolean(filters[cat.id]?.includes(option))
+      {audience.loading ? (
+        <>
+          <div
+            role="status"
+            aria-label="Finding routes"
+            className="flex min-h-0 flex-1 flex-col items-center justify-center p-6"
+          >
+            <AiThinking />
+          </div>
+          <Separator />
+          <div className="flex items-center gap-2 p-2.5">
+            <Button size="sm" variant="ghost" onClick={audience.onEdit}>
+              <ChevronLeft /> Filters
+            </Button>
+            <Button size="sm" className="flex-1" disabled>
+              Finding routes
+            </Button>
+          </div>
+        </>
+      ) : suggested ? (
+        <>
+          <ScrollArea className="flex min-h-0 flex-1 flex-col">
+            {routes.length === 0 ? (
+              <p className="p-3.5 text-muted-foreground">
+                No routes in this area. Use a larger radius.
+              </p>
+            ) : (
+              <ul className="flex flex-col py-1.5" aria-live="polite">
+                <li className="flex items-baseline justify-between gap-2 py-1.5 pr-4 pl-3.5 text-xs text-muted-foreground tabular-nums">
+                  <span className="flex items-center gap-2">
+                    <FitDot /> {routes.length}{" "}
+                    {routes.length === 1 ? "route" : "routes"}
+                  </span>
+                  <span>
+                    {fmtNum(residences)} residences ·{" "}
+                    {fmtMoney(residences * audience.rate)}
+                  </span>
+                </li>
+                {routes.map((r) => {
+                  const added = audience.isAdded(r)
                   return (
-                    <Button
-                      key={option}
-                      size="xs"
-                      variant="outline"
-                      aria-pressed={on}
-                      className={cn(
-                        "rounded-full font-normal tabular-nums",
-                        on &&
-                          "border-foreground bg-foreground text-background hover:bg-foreground/85 hover:text-background"
-                      )}
-                      onClick={() => toggle(cat.id, option)}
-                    >
-                      {option}
-                    </Button>
+                    <React.Fragment key={r.id}>
+                      <li
+                        className="flex items-center gap-2 py-1.5 pr-4 pl-3.5 tabular-nums hover:bg-muted/50"
+                        onPointerEnter={() => audience.onSpot(r.id)}
+                        onPointerLeave={() => audience.onSpot(null)}
+                        onFocus={() => audience.onSpot(r.id)}
+                        onBlur={() => audience.onSpot(null)}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="flex items-center gap-2">
+                            <span className="font-medium">
+                              {r.zip} · {r.code}
+                            </span>
+                            <FitBadge percent={audience.percent[r.id]} />
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {fmtNum(r.residences)} residences
+                          </span>
+                        </div>
+                        <span className="font-medium">
+                          {fmtMoney(r.residences * audience.rate)}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          aria-pressed={added}
+                          aria-label={
+                            added
+                              ? `Remove ${r.zip} ${r.code} from ${activeLabel}`
+                              : `Add ${r.zip} ${r.code} to ${activeLabel}`
+                          }
+                          onClick={() =>
+                            added ? audience.onRemove(r) : audience.onAdd(r)
+                          }
+                        >
+                          {added ? <Check /> : <Plus />}
+                        </Button>
+                      </li>
+                    </React.Fragment>
                   )
                 })}
-              </div>
+                {audience.more > 0 && (
+                  <li className="px-3.5 pt-2 pb-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={audience.onMore}
+                    >
+                      Load more
+                    </Button>
+                  </li>
+                )}
+              </ul>
+            )}
+          </ScrollArea>
+          <Separator />
+          <div className="flex items-center gap-2 p-2.5">
+            <Button size="sm" variant="ghost" onClick={audience.onEdit}>
+              <ChevronLeft /> Filters
+            </Button>
+            <Button size="sm"
+              className="flex-1"
+              disabled={toAdd === 0}
+              onClick={audience.onAddAll}
+            >
+              {toAdd > 0
+                ? `Add ${toAdd} to ${activeLabel}`
+                : routes.length > 0
+                  ? `All in ${activeLabel}`
+                  : `Add to ${activeLabel}`}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <ScrollArea className="flex min-h-0 flex-1 flex-col">
+            <div className="flex flex-col gap-4 p-3.5">
+              {AUDIENCE.map((cat) => (
+                <div
+                  key={cat.id}
+                  role="group"
+                  aria-labelledby={`aud-${cat.id}`}
+                  className="flex flex-col gap-2"
+                >
+                  <span id={`aud-${cat.id}`} className="text-xs font-medium">
+                    {cat.label}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cat.options.map((option) => {
+                      const on = Boolean(filters[cat.id]?.includes(option))
+                      return (
+                        <Button
+                          key={option}
+                          size="xs"
+                          variant="outline"
+                          aria-pressed={on}
+                          className={cn(
+                            "rounded-full font-normal tabular-nums",
+                            on &&
+                              "border-foreground bg-foreground text-background hover:bg-foreground/85 hover:text-background"
+                          )}
+                          onClick={() => toggle(cat.id, option)}
+                        >
+                          {option}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </ScrollArea>
-      <Separator />
-      <div className="flex flex-col gap-2 p-2.5">
-        <div className="flex min-h-7 items-center justify-between gap-2 pl-1">
-          {count === 0 ? (
-            <span className="text-muted-foreground">No filters selected</span>
-          ) : ids.size === 0 ? (
-            <span className="text-muted-foreground">No routes fit these filters</span>
-          ) : (
-            <span className="flex items-center gap-2 tabular-nums" aria-live="polite">
-              <FitDot /> {fitText(ids.size)}
-            </span>
-          )}
-          <Button variant="ghost" size="sm" disabled={count === 0} onClick={() => onChange({})}>
-            Clear filters
-          </Button>
-        </div>
-        <Button variant="outline" size="sm" disabled={toAdd === 0} onClick={onAddAll}>
-          {toAdd > 0
-            ? `Add ${toAdd} to ${activeLabel}`
-            : ids.size > 0
-              ? `Already in ${activeLabel}`
-              : `Add to ${activeLabel}`}
-        </Button>
-      </div>
+          </ScrollArea>
+          <Separator />
+          <div className="flex items-center gap-2 p-2.5">
+            <Button size="sm"
+              variant="ghost"
+              disabled={count === 0}
+              onClick={() => onChange({})}
+            >
+              Clear
+            </Button>
+            <Button size="sm"
+              className="flex-1"
+              disabled={count === 0}
+              onClick={audience.onSuggest}
+            >
+              <Sparkles /> Suggest routes
+            </Button>
+          </div>
+        </>
+      )}
     </section>
   )
 }
@@ -1141,7 +1532,9 @@ function LocationSearch({
   const [open, setOpen] = React.useState(false)
   const [index, setIndex] = React.useState(0)
   const [results, setResults] = React.useState<Location[]>([])
-  const [status, setStatus] = React.useState<"idle" | "loading" | "error">("idle")
+  const [status, setStatus] = React.useState<"idle" | "loading" | "error">(
+    "idle"
+  )
   const listId = React.useId()
   // Two search boxes (page and map dialog) show the same location.
   React.useEffect(() => setText(location.label), [location])
@@ -1182,13 +1575,18 @@ function LocationSearch({
   }
 
   return (
-    <div className={cn(!className?.includes("absolute") && "relative", className)}>
+    <div
+      className={cn(!className?.includes("absolute") && "relative", className)}
+    >
       <InputGroup className={groupClassName}>
         <InputGroupAddon>
           <Search />
         </InputGroupAddon>
         {trailing && (
-          <InputGroupAddon align="inline-end" className="gap-1 self-stretch py-0">
+          <InputGroupAddon
+            align="inline-end"
+            className="gap-1 self-stretch py-0"
+          >
             {/* Full-height divider, same colour as the field's border */}
             <span aria-hidden className="w-px self-stretch bg-input" />
             {trailing}
@@ -1221,7 +1619,9 @@ function LocationSearch({
               e.preventDefault()
               setOpen(true)
               const step = e.key === "ArrowDown" ? 1 : -1
-              setIndex((i) => (i + step + matches.length) % Math.max(1, matches.length))
+              setIndex(
+                (i) => (i + step + matches.length) % Math.max(1, matches.length)
+              )
             } else if (e.key === "Enter" && open && matches[index]) {
               e.preventDefault()
               pick(matches[index])
@@ -1239,7 +1639,10 @@ function LocationSearch({
           className="absolute top-full z-20 mt-1 flex w-full flex-col rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
         >
           {!searching && (
-            <li role="presentation" className="px-2 pt-1 pb-0.5 text-xs text-muted-foreground">
+            <li
+              role="presentation"
+              className="px-2 pt-1 pb-0.5 text-xs text-muted-foreground"
+            >
               Suggested
             </li>
           )}
@@ -1276,10 +1679,14 @@ function LocationSearch({
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">{place.label}</span>
                   {place.detail && (
-                    <span className="truncate text-xs text-muted-foreground">{place.detail}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {place.detail}
+                    </span>
                   )}
                 </span>
-                {place.id === location.id && <Check className="ml-auto size-3.5 shrink-0" />}
+                {place.id === location.id && (
+                  <Check className="ml-auto size-3.5 shrink-0" />
+                )}
               </li>
             ))
           )}
@@ -1331,7 +1738,8 @@ function TargetingCard({
       <CardHeader>
         <CardTitle>Targeting</CardTitle>
         <CardDescription>
-          Choose the carrier routes to mail. Every residence on a selected route gets a piece.
+          Choose the carrier routes to mail. Every residence on a selected route
+          gets a piece.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -1349,15 +1757,27 @@ function TargetingCard({
           hint={hint}
           onToggle={onToggle}
           highlight={audience.ids}
+          spotlight={audience.spotId}
           scrollZoom={false}
           {...tools}
           className="h-96"
           sidePanel={
-            filtersOpen && <AudiencePanel audience={audience} onClose={() => setFiltersOpen(false)} />
+            filtersOpen && (
+              <AudiencePanel
+                audience={audience}
+                onClose={() => setFiltersOpen(false)}
+              />
+            )
           }
           viewControl={
             <div className={MAP_PILL}>
-              <IconButton variant="ghost" size="icon-sm" label="Open map" side="left" onClick={onOpenMap}>
+              <IconButton
+                variant="ghost"
+                size="icon-sm"
+                label="Open map"
+                side="left"
+                onClick={onOpenMap}
+              >
                 <Expand />
               </IconButton>
             </div>
@@ -1372,7 +1792,6 @@ function TargetingCard({
             className="absolute top-3 left-3"
           />
           <AudienceButton
-            audience={audience}
             side="right"
             open={filtersOpen}
             onOpenChange={setFiltersOpen}
@@ -1391,14 +1810,22 @@ function TargetingCard({
             </span>
           ) : (
             <span>
-              <span className="font-medium tabular-nums">{fmtNum(routeCount)}</span>{" "}
+              <span className="font-medium tabular-nums">
+                {fmtNum(routeCount)}
+              </span>{" "}
               {routeCount === 1 ? "route" : "routes"}
               <span className="mx-2 text-muted-foreground">·</span>
-              <span className="font-medium tabular-nums">{fmtNum(residences)}</span> residences
+              <span className="font-medium tabular-nums">
+                {fmtNum(residences)}
+              </span>{" "}
+              residences
               {pieces !== residences && (
                 <>
                   <span className="mx-2 text-muted-foreground">·</span>
-                  <span className="font-medium tabular-nums">{fmtNum(pieces)}</span> pieces
+                  <span className="font-medium tabular-nums">
+                    {fmtNum(pieces)}
+                  </span>{" "}
+                  pieces
                 </>
               )}
             </span>
@@ -1448,107 +1875,143 @@ function MapDialog({
   const active = views.find((v) => v.wave.id === activeId) ?? views[0]
   // With "All waves" selected, the list shows every selected route once.
   const listed = all
-    ? [...new Set(views.flatMap((v) => v.routes))].sort((a, b) => a.order - b.order)
+    ? [...new Set(views.flatMap((v) => v.routes))].sort(
+        (a, b) => a.order - b.order
+      )
     : active.routes
   const [filtersOpen, setFiltersOpen] = React.useState(false)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[min(780px,calc(100svh-3rem))] grid-rows-[auto_minmax(0,1fr)] sm:max-w-[min(1240px,calc(100%-3rem))]">
         <DialogHeader>
-          <DialogTitle>Routes in {location.label}</DialogTitle>
+          <DialogTitle>Choose routes</DialogTitle>
           <DialogDescription>
-            Choose a wave, then click routes on the map to add them to it. A route can be in more
-            than one wave. Click a route that is already in this wave to remove it.
+            Choose a wave, then click routes on the map to add them to it.
           </DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 grid-cols-[300px_minmax(0,1fr)] gap-4">
           <ScrollArea className="flex min-h-0 flex-col rounded-lg border">
-          <div className="flex flex-col gap-3 p-3">
-            <WaveSelect
-              views={views}
-              activeId={activeId}
-              onActiveChange={onActiveChange}
-              onAddWave={onAddWave}
-              onRemoveWave={onRemoveWave}
-              className="p-0 shadow-none ring-0"
-            />
-            {all ? (
-              <p className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
-                {views.length} waves · {fmtNum(views.reduce((n, v) => n + v.residences, 0))} pieces
-              </p>
-            ) : (
-              // Progress to the wave minimum, as a neutral bar and not as an error. In its own box.
-              <div className="flex flex-col gap-2 rounded-lg border bg-muted/40 p-3">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="flex items-baseline gap-1.5">
-                    <span className="text-lg leading-none font-semibold tracking-tight tabular-nums">
-                      {fmtNum(active.residences)}
+            <div className="flex flex-col gap-3 p-3">
+              <WaveSelect
+                views={views}
+                activeId={activeId}
+                onActiveChange={onActiveChange}
+                onAddWave={onAddWave}
+                onRemoveWave={onRemoveWave}
+                className="p-0 shadow-none ring-0"
+              />
+              {all ? (
+                <p className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  {views.length} waves ·{" "}
+                  {fmtNum(views.reduce((n, v) => n + v.residences, 0))} pieces
+                </p>
+              ) : (
+                // Progress to the wave minimum, as a neutral bar and not as an error. In its own box.
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/40 p-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-lg leading-none font-semibold tracking-tight tabular-nums">
+                        {fmtNum(active.residences)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        residences
+                      </span>
                     </span>
-                    <span className="text-xs text-muted-foreground">residences</span>
-                  </span>
-                  <span className="flex items-center gap-1 self-center text-xs whitespace-nowrap text-muted-foreground">
-                    <CalendarDays className="size-3.5" />
-                    {fmtDate(active.wave.date, "EEE, MMM d")}
-                  </span>
+                    <span className="flex items-center gap-1 self-center text-xs whitespace-nowrap text-muted-foreground">
+                      <CalendarDays className="size-3.5" />
+                      {fmtDate(active.wave.date, "EEE, MMM d")}
+                    </span>
+                  </div>
+                  {/* The bar stays when the minimum is reached: it is then full. */}
+                  <MinimumBar view={active} />
+                  <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    {active.residences < WAVE_MINIMUM ? (
+                      <span>
+                        <span className="font-medium text-foreground tabular-nums">
+                          {fmtNum(WAVE_MINIMUM - active.residences)}
+                        </span>{" "}
+                        to go
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1">
+                        <Check className="size-3.5 text-emerald-600" /> Minimum
+                        reached
+                      </span>
+                    )}
+                    <span className="whitespace-nowrap tabular-nums">
+                      Min. {fmtNum(WAVE_MINIMUM)}
+                    </span>
+                  </div>
                 </div>
-                {/* The bar stays when the minimum is reached: it is then full. */}
-                <MinimumBar view={active} />
-                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                  {active.residences < WAVE_MINIMUM ? (
-                    <span>
-                      <span className="font-medium text-foreground tabular-nums">
-                        {fmtNum(WAVE_MINIMUM - active.residences)}
-                      </span>{" "}
-                      more to reach the minimum
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1">
-                      <Check className="size-3.5 text-emerald-600" /> Minimum reached
-                    </span>
-                  )}
-                  <span className="whitespace-nowrap tabular-nums">Min. {fmtNum(WAVE_MINIMUM)}</span>
+              )}
+              {listed.length === 0 ? (
+                <p className="text-muted-foreground">
+                  No routes yet. Click routes on the map.
+                </p>
+              ) : (
+                // One group for each city, in the order the cities were first used.
+                <div className="flex flex-col gap-3">
+                  {groupByCity(listed).map((group) => (
+                    <section key={group.city} aria-label={group.city}>
+                      <h3 className="flex items-baseline justify-between gap-2 border-b pb-1.5 text-xs font-medium">
+                        <span className="truncate">{group.city}</span>
+                        <span className="pr-1 font-normal text-muted-foreground tabular-nums">
+                          {group.routes.length}{" "}
+                          {group.routes.length === 1 ? "route" : "routes"}
+                        </span>
+                      </h3>
+                      <ul className="flex flex-col">
+                        {group.routes.map((r) => (
+                          <li
+                            key={r.id}
+                            className="flex items-center gap-2 border-b py-1.5 last:border-0"
+                          >
+                            <RouteLink id={r.id} onShow={onShow} />
+                            {/* With one wave chosen, every route here is in it: no dots. "All waves" shows which waves. */}
+                            {all ? (
+                              <RouteWaves route={r} views={views} />
+                            ) : (
+                              <span className="flex-1" />
+                            )}
+                            <span className="text-muted-foreground tabular-nums">
+                              {fmtNum(r.residences)}
+                            </span>
+                            <IconButton
+                              variant="ghost"
+                              size="icon-xs"
+                              label={`Remove route ${r.id}`}
+                              tooltip={
+                                all ? "Remove from all waves" : "Remove route"
+                              }
+                              side="right"
+                              onClick={() => onRemove(r.id)}
+                            >
+                              <Trash2 />
+                            </IconButton>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ))}
                 </div>
-              </div>
-            )}
-            <span className="pt-1 text-xs font-medium text-muted-foreground">
-              {all ? "Selected routes" : `Wave ${active.index + 1} routes`} ({listed.length})
-            </span>
-            {listed.length === 0 ? (
-              <p className="text-muted-foreground">No routes yet. Click routes on the map.</p>
-            ) : (
-              <ul className="flex flex-col">
-                {listed.map((r) => (
-                  <li key={r.id} className="flex items-center gap-2 border-b py-1.5 last:border-0">
-                    <RouteLink id={r.id} onShow={onShow} />
-                    <OtherWaves route={r} view={all ? undefined : active} views={views} />
-                    <span className="text-muted-foreground tabular-nums">
-                      {fmtNum(r.residences)}
-                    </span>
-                    <IconButton
-                      variant="ghost"
-                      size="icon-xs"
-                      label={`Remove route ${r.id}`}
-                      tooltip={all ? "Remove from all waves" : "Remove route"}
-                      side="right"
-                      onClick={() => onRemove(r.id)}
-                    >
-                      <Trash2 />
-                    </IconButton>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+              )}
+            </div>
           </ScrollArea>
           <RouteMap
             colors={colors}
             hint={hint}
             onToggle={onToggle}
             highlight={audience.ids}
+          spotlight={audience.spotId}
             {...tools}
             className="min-h-0"
             sidePanel={
-              filtersOpen && <AudiencePanel audience={audience} onClose={() => setFiltersOpen(false)} />
+              filtersOpen && (
+                <AudiencePanel
+                  audience={audience}
+                  onClose={() => setFiltersOpen(false)}
+                />
+              )
             }
           >
             <LocationSearch
@@ -1559,7 +2022,6 @@ function MapDialog({
               trailing={<RadiusSelect tools={tools} />}
             />
             <AudienceButton
-              audience={audience}
               side="right"
               open={filtersOpen}
               onOpenChange={setFiltersOpen}
@@ -1569,6 +2031,24 @@ function MapDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+/** City of a route: the city of the place it was loaded for. */
+function cityOf(route: Route) {
+  const place = LOCATION_BY_ID[route.location]
+  return place?.city ?? place?.label ?? "Other"
+}
+
+/** Routes in groups of one city each. Two places in the same city share a group. */
+function groupByCity(routes: Route[]) {
+  const groups: { city: string; routes: Route[] }[] = []
+  for (const route of routes) {
+    const city = cityOf(route)
+    const group = groups.find((g) => g.city === city)
+    if (group) group.routes.push(route)
+    else groups.push({ city, routes: [route] })
+  }
+  return groups
 }
 
 /* --------------------------------------------------------------- schedule */
@@ -1587,7 +2067,13 @@ function WaveDot({ color }: { color: string }) {
  * A route number that shows the route on the map. It is underlined on hover, like a link, and our
  * own tooltip says where it goes.
  */
-function RouteLink({ id, onShow }: { id: string; onShow: (routeId: string) => void }) {
+function RouteLink({
+  id,
+  onShow,
+}: {
+  id: string
+  onShow: (routeId: string) => void
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -1605,16 +2091,19 @@ function RouteLink({ id, onShow }: { id: string; onShow: (routeId: string) => vo
   )
 }
 
-/** Dots for the other waves that also mail this route. Without `view`, dots for every wave that mails it. */
-function OtherWaves({ route, view, views }: { route: Route; view?: WaveView; views: WaveView[] }) {
-  const also = views.filter((v) => v !== view && v.routes.includes(route))
-  const text = `${view ? "Also in" : "In"} Wave ${also.map((v) => v.index + 1).join(", ")}`
+/** A dot for each wave that mails this route. */
+function RouteWaves({ route, views }: { route: Route; views: WaveView[] }) {
+  const waves = views.filter((v) => v.routes.includes(route))
   return (
-    <span className="flex flex-1 items-center gap-1" title={also.length ? text : undefined}>
-      {also.map((v) => (
+    <span className="flex flex-1 items-center gap-1">
+      {waves.map((v) => (
         <WaveDot key={v.wave.id} color={v.color} />
       ))}
-      {also.length > 0 && <span className="sr-only">{text}</span>}
+      {waves.length > 0 && (
+        <span className="sr-only">
+          In Wave {waves.map((v) => v.index + 1).join(", ")}
+        </span>
+      )}
     </span>
   )
 }
@@ -1655,19 +2144,27 @@ function ScheduleCard({
       <CardHeader>
         <CardTitle>Mailing schedule</CardTitle>
         <CardDescription>
-          Each wave is printed and mailed on its own date, and priced on its own size. Add a wave to
-          mail routes on another date.
+          Each wave is printed and mailed on its own date, and priced on its own
+          size. Add a wave to mail routes on another date.
         </CardDescription>
         <CardAction>
           <DropdownMenu>
-            <IconButton trigger={<DropdownMenuTrigger />} variant="outline" size="icon" label="Schedule options">
+            <IconButton
+              trigger={<DropdownMenuTrigger />}
+              variant="outline"
+              size="icon"
+              label="Schedule options"
+            >
               <MoreHorizontal />
             </IconButton>
             <DropdownMenuContent align="end" className="w-60">
               <DropdownMenuItem disabled={!canSplit} onClick={onSplit}>
                 <Split /> Distribute routes evenly…
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={!multi} onClick={actions.sendOnOneDate}>
+              <DropdownMenuItem
+                disabled={!multi}
+                onClick={actions.sendOnOneDate}
+              >
                 <Merge /> Merge into one wave
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1703,7 +2200,13 @@ function ScheduleCard({
 }
 
 /** Progress of a wave toward the minimum, in the wave's colour. It is full when the minimum is reached. */
-function MinimumBar({ view, className }: { view: WaveView; className?: string }) {
+function MinimumBar({
+  view,
+  className,
+}: {
+  view: WaveView
+  className?: string
+}) {
   return (
     <div
       role="progressbar"
@@ -1711,7 +2214,10 @@ function MinimumBar({ view, className }: { view: WaveView; className?: string })
       aria-valuemin={0}
       aria-valuemax={WAVE_MINIMUM}
       aria-valuenow={Math.min(view.residences, WAVE_MINIMUM)}
-      className={cn("h-1.5 overflow-hidden rounded-full bg-foreground/10", className)}
+      className={cn(
+        "h-1.5 overflow-hidden rounded-full bg-foreground/10",
+        className
+      )}
     >
       <div
         className="h-full rounded-full transition-[width] duration-300"
@@ -1728,12 +2234,17 @@ function MinimumBar({ view, className }: { view: WaveView; className?: string })
 function IssueList({ view, all }: { view: WaveView; all?: boolean }) {
   const issues = all
     ? view.issues
-    : view.issues.filter((issue) => issue.kind === "duplicate" || issue.kind === "early")
+    : view.issues.filter(
+        (issue) => issue.kind === "duplicate" || issue.kind === "early"
+      )
   if (issues.length === 0) return null
   return (
     <ul className="flex flex-col gap-1">
       {issues.map((issue) => (
-        <li key={issue.kind} className="flex items-start gap-1.5 text-destructive">
+        <li
+          key={issue.kind}
+          className="flex items-start gap-1.5 text-destructive"
+        >
           <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
           {issue.text}
         </li>
@@ -1761,9 +2272,13 @@ function WaveRow({
   // do: they turn into errors only after the user clicked Continue to Design.
   const showErrors = React.useContext(ShowErrors)
   const hasErrors =
-    (showErrors && hasIssues) || view.issues.some((i) => i.kind === "duplicate" || i.kind === "early")
+    (showErrors && hasIssues) ||
+    view.issues.some((i) => i.kind === "duplicate" || i.kind === "early")
   const dateError = view.issues.some(
-    (i) => i.kind === "duplicate" || i.kind === "early" || (showErrors && i.kind === "date")
+    (i) =>
+      i.kind === "duplicate" ||
+      i.kind === "early" ||
+      (showErrors && i.kind === "date")
   )
   const title = `Wave ${view.index + 1}`
 
@@ -1772,10 +2287,23 @@ function WaveRow({
       <Collapsible
         open={open}
         onOpenChange={setOpen}
-        className={cn("rounded-lg border", hasErrors && "border-destructive/50")}
+        className={cn(
+          "rounded-lg border",
+          hasErrors && "border-destructive/50"
+        )}
       >
         {/* Name, progress, date and price sit the same distance apart. */}
-        <div className="flex items-center gap-6 p-2.5">
+        {/* A click on an empty part of the row shows or hides the routes, like the chevron.
+            Clicks on a control (date, menu), and clicks inside a popover it opened, do nothing here. */}
+        <div
+          className="flex items-center gap-6 p-2.5"
+          onClick={(e) => {
+            const target = e.target as HTMLElement
+            if (!e.currentTarget.contains(target)) return
+            if (target.closest("button, a, input, select, textarea, [role='button']")) return
+            setOpen((o) => !o)
+          }}
+        >
           <CollapsibleTrigger
             render={
               <button
@@ -1785,7 +2313,10 @@ function WaveRow({
             }
           >
             <ChevronRight
-              className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
+              className={cn(
+                "size-4 shrink-0 text-muted-foreground transition-transform",
+                open && "rotate-90"
+              )}
             />
             <WaveDot color={view.color} />
             <span className="min-w-0">
@@ -1793,15 +2324,20 @@ function WaveRow({
                 {title}
               </span>
               <span className="block truncate text-xs text-muted-foreground">
-                {view.routes.length} {view.routes.length === 1 ? "route" : "routes"}
+                {view.routes.length}{" "}
+                {view.routes.length === 1 ? "route" : "routes"}
               </span>
             </span>
           </CollapsibleTrigger>
 
           {/* Same pattern as the price: the current value in black, the minimum in grey below it. */}
           <div className="w-32 shrink-0 tabular-nums">
-            <div className="font-medium whitespace-nowrap">{fmtNum(view.residences)} residences</div>
-            <div className="text-xs text-muted-foreground">Min. {fmtNum(WAVE_MINIMUM)}</div>
+            <div className="font-medium whitespace-nowrap">
+              {fmtNum(view.residences)} residences
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Min. {fmtNum(WAVE_MINIMUM)}
+            </div>
           </div>
 
           <DatePicker
@@ -1815,7 +2351,8 @@ function WaveRow({
           <div className="w-28 shrink-0 tabular-nums">
             <div className="font-medium">{fmtMoney(view.subtotal)}</div>
             <div className="text-xs text-muted-foreground">
-              {fmtNum(view.residences)} × {fmtMoney(view.price)}
+              {fmtNum(view.residences)}{" "}
+              {view.residences === 1 ? "piece" : "pieces"}
             </div>
           </div>
 
@@ -1829,7 +2366,10 @@ function WaveRow({
             >
               <MoreHorizontal />
             </IconButton>
-            <DropdownMenuContent align="end" className="w-auto min-w-48 whitespace-nowrap">
+            <DropdownMenuContent
+              align="end"
+              className="w-auto min-w-48 whitespace-nowrap"
+            >
               <DropdownMenuItem onClick={onOpenMap}>
                 <MapPin /> Choose routes on the map
               </DropdownMenuItem>
@@ -1884,9 +2424,11 @@ function WaveRow({
                           </span>
                         </TableCell>
                         <TableCell className="max-w-40 truncate text-muted-foreground">
-                          {LOCATION_BY_ID[r.location]?.city ?? LOCATION_BY_ID[r.location]?.label}
+                          {cityOf(r)}
                         </TableCell>
-                        <TableCell className="text-muted-foreground tabular-nums">{r.zip}</TableCell>
+                        <TableCell className="text-muted-foreground tabular-nums">
+                          {r.zip}
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {fmtNum(r.residences)}
                         </TableCell>
@@ -1902,21 +2444,32 @@ function WaveRow({
                             >
                               <MoreHorizontal />
                             </IconButton>
-                            <DropdownMenuContent align="end" className="w-auto min-w-52 whitespace-nowrap">
-                              <DropdownMenuItem onClick={() => actions.showOnMap(r.id)}>
+                            <DropdownMenuContent
+                              align="end"
+                              className="w-auto min-w-52 whitespace-nowrap"
+                            >
+                              <DropdownMenuItem
+                                onClick={() => actions.showOnMap(r.id)}
+                              >
                                 <MapPin /> Show on map
                               </DropdownMenuItem>
                               {others.length > 0 && (
                                 <>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuGroup>
-                                    <DropdownMenuLabel>Mail in</DropdownMenuLabel>
+                                    <DropdownMenuLabel>
+                                      Mail in
+                                    </DropdownMenuLabel>
                                     {views.map((o) => (
                                       <DropdownMenuCheckboxItem
                                         key={o.wave.id}
                                         checked={o.routes.includes(r)}
                                         onCheckedChange={(on) =>
-                                          actions.setRouteWave(r.id, o.wave.id, on)
+                                          actions.setRouteWave(
+                                            r.id,
+                                            o.wave.id,
+                                            on
+                                          )
                                         }
                                       >
                                         <WaveDot color={o.color} />
@@ -1935,7 +2488,13 @@ function WaveRow({
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
                                     variant="destructive"
-                                    onClick={() => actions.setRouteWave(r.id, view.wave.id, false)}
+                                    onClick={() =>
+                                      actions.setRouteWave(
+                                        r.id,
+                                        view.wave.id,
+                                        false
+                                      )
+                                    }
                                   >
                                     <Trash2 /> Remove route
                                   </DropdownMenuItem>
@@ -1976,12 +2535,18 @@ function SplitDialog({
   singleTotal: number
   onApply: (count: number, first: Date, everyWeeks: number) => void
 }) {
-  const maxCount = Math.max(2, Math.min(MAX_WAVES, Math.floor(residences / WAVE_MINIMUM), routeIds.length))
+  const maxCount = Math.max(
+    2,
+    Math.min(MAX_WAVES, Math.floor(residences / WAVE_MINIMUM), routeIds.length)
+  )
   const [count, setCount] = React.useState(Math.min(initialCount, maxCount))
   const [first, setFirst] = React.useState(initialDate)
   const [weeks, setWeeks] = React.useState("1")
 
-  const groups = React.useMemo(() => splitRoutes(routeIds, count), [routeIds, count])
+  const groups = React.useMemo(
+    () => splitRoutes(routeIds, count),
+    [routeIds, count]
+  )
   const rows = quote(groups)
   const dates = scheduleDates(first, count, Number(weeks))
   const total = rows.reduce((s, r) => s + r.subtotal, 0)
@@ -1999,15 +2564,20 @@ function SplitDialog({
         <DialogHeader>
           <DialogTitle>Distribute routes evenly</DialogTitle>
           <DialogDescription>
-            This replaces your current waves. Each route goes into one wave. Waves get a similar
-            size and keep neighbouring routes together. You can still change any route afterwards.
+            This replaces your current waves. Each route goes into one wave.
+            Waves get a similar size and keep neighbouring routes together. You
+            can still change any route afterwards.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-[auto_1fr_1fr] gap-3">
           <div className="flex flex-col gap-2">
             <Label id="count-label">Waves</Label>
-            <div className="flex items-center gap-1" role="group" aria-labelledby="count-label">
+            <div
+              className="flex items-center gap-1"
+              role="group"
+              aria-labelledby="count-label"
+            >
               <IconButton
                 variant="outline"
                 size="icon"
@@ -2017,7 +2587,10 @@ function SplitDialog({
               >
                 <Minus />
               </IconButton>
-              <span className="w-7 text-center font-medium tabular-nums" aria-live="polite">
+              <span
+                className="w-7 text-center font-medium tabular-nums"
+                aria-live="polite"
+              >
                 {count}
               </span>
               <IconButton
@@ -2033,11 +2606,20 @@ function SplitDialog({
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="first-date">First mailing</Label>
-            <DatePicker id="first-date" value={first} onChange={setFirst} className="w-full" />
+            <DatePicker
+              id="first-date"
+              value={first}
+              onChange={setFirst}
+              className="w-full"
+            />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="cadence">Then</Label>
-            <Select items={cadences} value={weeks} onValueChange={(v) => v && setWeeks(v)}>
+            <Select
+              items={cadences}
+              value={weeks}
+              onValueChange={(v) => v && setWeeks(v)}
+            >
               <SelectTrigger id="cadence" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -2059,15 +2641,18 @@ function SplitDialog({
                 <TableHead className="pl-3">Wave</TableHead>
                 <TableHead>Mails on</TableHead>
                 <TableHead className="text-right">Residences</TableHead>
-                <TableHead className="text-right">Per piece</TableHead>
                 <TableHead className="pr-3 text-right">Subtotal</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((r, i) => (
                 <TableRow key={i}>
-                  <TableCell className="pl-3 font-medium">Wave {i + 1}</TableCell>
-                  <TableCell className="tabular-nums">{fmtDate(dates[i], "EEE, MMM d")}</TableCell>
+                  <TableCell className="pl-3 font-medium">
+                    Wave {i + 1}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {fmtDate(dates[i], "EEE, MMM d")}
+                  </TableCell>
                   <TableCell
                     className={cn(
                       "text-right tabular-nums",
@@ -2076,7 +2661,6 @@ function SplitDialog({
                   >
                     {fmtNum(r.residences)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtMoney(r.price)}</TableCell>
                   <TableCell className="pr-3 text-right tabular-nums">
                     {fmtMoney(r.subtotal)}
                   </TableCell>
@@ -2092,13 +2676,15 @@ function SplitDialog({
               ? `${fmtMoney(total - singleTotal)} more than mailing on one date`
               : "Same price as mailing on one date"}
           </span>
-          <span className="font-medium tabular-nums">Total {fmtMoney(total)}</span>
+          <span className="font-medium tabular-nums">
+            Total {fmtMoney(total)}
+          </span>
         </div>
         {belowMin && (
           <p className="flex items-start gap-1.5 text-destructive">
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-            Each wave needs at least {fmtNum(WAVE_MINIMUM)} residences. Use fewer waves or add
-            routes.
+            Each wave needs at least {fmtNum(WAVE_MINIMUM)} residences. Use
+            fewer waves or add routes.
           </p>
         )}
 
@@ -2149,16 +2735,22 @@ function SummaryCard({
   const pending = <span className="text-muted-foreground">Pending</span>
   const rows: [string, React.ReactNode][] = [
     ["Campaign name", name || pending],
-    [locations.length > 1 ? "Locations" : "Location", locations.map((l) => l.label).join(" · ")],
+    [
+      locations.length > 1 ? "Locations" : "Location",
+      locations.map((l) => l.label).join(" · "),
+    ],
     ["Routes", routeCount ? fmtNum(routeCount) : pending],
     ["Residences", routeCount ? fmtNum(residences) : pending],
     multi
       ? ["Waves", views.length]
-      : ["Mailing date", views[0].wave.date ? fmtDate(views[0].wave.date, "MMM d, yyyy") : pending],
+      : [
+          "Mailing date",
+          views[0].wave.date
+            ? fmtDate(views[0].wave.date, "MMM d, yyyy")
+            : pending,
+        ],
   ]
   if (pieces !== residences) rows.splice(4, 0, ["Pieces", fmtNum(pieces)])
-  if (!multi && routeCount)
-    rows.push(["Price per piece", fmtMoney(views[0].price)])
 
   return (
     <Card className="sticky top-20 max-h-[calc(100svh-9.75rem)]">
@@ -2167,7 +2759,9 @@ function SummaryCard({
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
         <div>
-          <div className="text-3xl font-semibold tracking-tight tabular-nums">{fmtMoney(total)}</div>
+          <div className="text-3xl font-semibold tracking-tight tabular-nums">
+            {fmtMoney(total)}
+          </div>
           <div className="text-xs text-muted-foreground">
             Total before taxes for {fmtNum(pieces)} pieces
           </div>
@@ -2175,41 +2769,50 @@ function SummaryCard({
         <Separator />
         {/* Only this part scrolls when the window is short; total and action stay in view. */}
         <ScrollArea className="-mr-3 flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-col gap-4 pr-3">
-          <dl className="flex flex-col gap-2.5">
-            {rows.map(([label, value]) => (
-              <div key={label} className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">{label}</dt>
-                <dd className="truncate text-right font-medium tabular-nums">{value}</dd>
-              </div>
-            ))}
-          </dl>
+          <div className="flex flex-col gap-4 pr-3">
+            <dl className="flex flex-col gap-2.5">
+              {rows.map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className="truncate text-right font-medium tabular-nums">
+                    {value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
 
-          {multi && (
-            <>
-              <Separator />
-              <ul className="flex flex-col gap-2">
-                {views.map((v) => (
-                  <li
-                    key={v.wave.id}
-                    className="flex items-center gap-2"
-                    title={`${fmtNum(v.residences)} residences × ${fmtMoney(v.price)}`}
-                  >
-                    <WaveDot color={v.color} />
-                    <span className="font-medium whitespace-nowrap">Wave {v.index + 1}</span>
-                    <span className="flex-1 truncate text-muted-foreground">
-                      {fmtDate(v.wave.date, "MMM d")}
-                    </span>
-                    {showErrors && v.issues.length > 0 && (
-                      <CircleAlert className="size-3.5 text-destructive" aria-label="Needs fixing" />
-                    )}
-                    <span className="font-medium tabular-nums">{fmtMoney(v.subtotal)}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
+            {multi && (
+              <>
+                <Separator />
+                <ul className="flex flex-col gap-2">
+                  {views.map((v) => (
+                    <li
+                      key={v.wave.id}
+                      className="flex items-center gap-2"
+                      title={`${fmtNum(v.residences)} residences`}
+                    >
+                      <WaveDot color={v.color} />
+                      <span className="font-medium whitespace-nowrap">
+                        Wave {v.index + 1}
+                      </span>
+                      <span className="flex-1 truncate text-muted-foreground">
+                        {fmtDate(v.wave.date, "MMM d")}
+                      </span>
+                      {showErrors && v.issues.length > 0 && (
+                        <CircleAlert
+                          className="size-3.5 text-destructive"
+                          aria-label="Needs fixing"
+                        />
+                      )}
+                      <span className="font-medium tabular-nums">
+                        {fmtMoney(v.subtotal)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
         </ScrollArea>
 
         <Separator />
@@ -2222,14 +2825,20 @@ function SummaryCard({
           <button
             className="group self-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-destructive/30"
             onClick={() => {
-              const row = document.querySelector<HTMLElement>("[data-wave-issue]")
+              const row =
+                document.querySelector<HTMLElement>("[data-wave-issue]")
               row?.scrollIntoView({ behavior: "smooth", block: "center" })
-              row?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true })
+              row
+                ?.querySelector<HTMLElement>("button")
+                ?.focus({ preventScroll: true })
             }}
           >
-            <Badge variant="destructive" className="cursor-pointer group-hover:bg-destructive/20">
-              <CircleAlert /> {issueCount} {issueCount === 1 ? "thing" : "things"} to fix in the
-              schedule
+            <Badge
+              variant="destructive"
+              className="cursor-pointer group-hover:bg-destructive/20"
+            >
+              <CircleAlert /> {issueCount}{" "}
+              {issueCount === 1 ? "thing" : "things"} to fix in the schedule
               <ChevronRight />
             </Badge>
           </button>

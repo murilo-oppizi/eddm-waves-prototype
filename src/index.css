@@ -156,3 +156,65 @@
     @apply font-sans;
     }
 }
+/* Oppizi AI look, as on the eddm.com hero: brand pink to AI indigo. */
+:root {
+  --ai-from: #ef2b55;
+  --ai-to: #4f39f6;
+}
+
+/* "AI" ring: a pink-to-indigo arc that circles an element. Put it on a layer just behind the element. */
+@property --glow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes glow-spin {
+  to {
+    --glow-angle: 360deg;
+  }
+}
+
+/* In the components layer, so utilities (opacity, play state) can override it. */
+@layer components {
+  .ai-glow {
+    background: conic-gradient(
+      from var(--glow-angle),
+      transparent 0%,
+      var(--ai-from) 15%,
+      var(--ai-to) 32%,
+      transparent 50%
+    );
+    animation: glow-spin var(--glow-speed, 2.4s) linear infinite;
+  }
+}
+
+/* Light sweeping across "thinking" text. */
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.text-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-glow,
+  .text-shimmer {
+    animation: none;
+  }
+}

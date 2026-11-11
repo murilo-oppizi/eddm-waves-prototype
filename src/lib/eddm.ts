@@ -75,6 +75,58 @@ export type AudienceFilters = Record<string, string[]>
 export const countFilters = (filters: AudienceFilters) =>
   Object.values(filters).reduce((s, list) => s + list.length, 0)
 
+/** A stable number from 0 to 1 for a text. Used for placeholder data that must not change between renders. */
+function unit(text: string) {
+  let h = 2166136261
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619)
+  return ((h >>> 0) % 10000) / 10000
+}
+
+/**
+ * Placeholder: the share of the route's residences in one group of a category, 0 to 1.
+ * The route's main group has the largest share, then its second group, then the groups next to them.
+ */
+function groupShare(route: Route, cat: AudienceCategory, option: string) {
+  const groups = route.audience[cat.id]
+  const main = 0.5 + 0.35 * unit(`${route.id}:${cat.id}`)
+  if (!cat.ordered) return option === groups[0] ? main : 1 - main
+  const second = (1 - main) * (0.55 + 0.25 * unit(`${cat.id}:${route.id}`))
+  if (option === groups[0]) return main
+  if (option === groups[1]) return second
+  const i = cat.options.indexOf(option)
+  const near = groups.filter((g) => Math.abs(cat.options.indexOf(g) - i) === 1).length
+  return near ? ((1 - main - second) / 2) * near * 0.8 : 0
+}
+
+/**
+ * How much of a route fits the audience, 0 to 100. For each filtered category, the share of the
+ * route's residences in the selected groups. The result is the average of the categories.
+ */
+export function fitPercent(route: Route, filters: AudienceFilters) {
+  const active = AUDIENCE.filter((c) => filters[c.id]?.length)
+  if (active.length === 0) return 0
+  const total = active.reduce(
+    (sum, c) => sum + Math.min(1, filters[c.id].reduce((n, o) => n + groupShare(route, c, o), 0)),
+    0
+  )
+  return Math.round((total / active.length) * 100)
+}
+
+/**
+ * Routes to suggest for an audience: every route, best fit first. The list shows `SUGGEST_PAGE` of
+ * them at a time. There is no minimum fit, so the list always has routes to show.
+ */
+export const SUGGEST_PAGE = 10
+export function suggestRoutes(routes: Route[], filters: AudienceFilters) {
+  const scored = routes
+    .map((route) => ({ route, percent: fitPercent(route, filters) }))
+    .sort((a, b) => b.percent - a.percent || b.route.residences - a.route.residences)
+  const percent: Record<string, number> = Object.fromEntries(
+    scored.map((s) => [s.route.id, s.percent])
+  )
+  return { ranked: scored.map((s) => s.route), percent }
+}
+
 /** A route fits when, for every category with a selection, one of the selected groups is common on it. */
 export function fitsAudience(route: Route, filters: AudienceFilters) {
   const active = AUDIENCE.filter((c) => filters[c.id]?.length)
@@ -95,7 +147,7 @@ export type Location = {
   label: string
   /** Second line in the search results: street, city, state */
   detail?: string
-  /** City and state of a searched place, for example "New York, New York". Suggested places are cities already. */
+  /** City and state of a searched place, for example "New York, NY". Suggested places are cities already. */
   city?: string
   /** [longitude, latitude] */
   center: [number, number]
