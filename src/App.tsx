@@ -1891,6 +1891,21 @@ function TargetingCard({
             onChange={onLocationChange}
             trailing={<RadiusSelect tools={tools} />}
           />
+          {/* Clients did not know a new search adds a place: the routes already picked stay selected. */}
+          {hasPlace && (
+            <p className="text-muted-foreground">
+              You can add routes from multiple cities and locations. Selected
+              routes stay when you search.{" "}
+              <button
+                type="button"
+                className="rounded-sm font-medium text-foreground underline underline-offset-4 outline-none hover:text-foreground/80 focus-visible:ring-3 focus-visible:ring-ring/50"
+                // Focusing the field selects the current place, so typing starts a new search.
+                onClick={() => document.getElementById("city")?.focus()}
+              >
+                Add another place
+              </button>
+            </p>
+          )}
         </div>
         {view === "table" && !hasPlace ? (
           <div className="flex h-96 items-center justify-center rounded-lg border bg-muted/40 p-4">
