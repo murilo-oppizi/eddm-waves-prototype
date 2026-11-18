@@ -1060,6 +1060,17 @@ function WaveSelect({
           </Button>
         </PopoverContent>
       </Popover>
+      {/* Always in view, so adding a wave does not depend on opening the menu. The new wave is selected. */}
+      <IconButton
+        variant="ghost"
+        size="icon-sm"
+        label="Add wave"
+        side="bottom"
+        disabled={views.length >= MAX_WAVES}
+        onClick={onAddWave}
+      >
+        <Plus />
+      </IconButton>
       <Popover>
         <IconButton
           trigger={<PopoverTrigger />}
